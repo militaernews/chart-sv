@@ -303,13 +303,9 @@ Drones,3,0,0,0`;
 	</div>
 
 	<!-- Chart Section -->
-	<div class="card bg-neutral text-neutral-content shadow-xl lg:col-span-2">
+	<div class="card text-neutral-content shadow-xl lg:col-span-2">
 		<div class="card-body">
-			<div
-				bind:this={chartElement}
-				data-export-chart
-				class="relative rounded-lg bg-neutral p-4 pr-6"
-			>
+			<div bind:this={chartElement} data-export-chart class="relative p-4 pr-6">
 				<!-- Branding Component -->
 				<Branding isMobile={false} />
 
