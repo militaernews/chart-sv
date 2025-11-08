@@ -4,6 +4,10 @@
 	let { children } = $props();
 </script>
 
+<svelte:head>
+	<title>Military Loss Chart Builder</title>
+</svelte:head>
+
 <div
 	class="flex min-h-dvh w-dvw items-center justify-center bg-black p-4"
 	style="font-family:'HP Simplified'"

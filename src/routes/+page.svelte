@@ -1,10 +1,9 @@
 <!-- +page.svelte -->
-<script>
-	import Branding from './../lib/components/Branding.svelte';
+<script lang="ts">
 	import { onMount } from 'svelte';
-	import html2canvas from 'html2canvas';
+	import html2canvas from 'html2canvas-pro';
+	import Branding from '$lib/components/Branding.svelte';
 
-	let chartType = $state('horizontal');
 	let title = $state('Russian Losses in Kharkiv — June 3, 2024');
 	let maxScaleValue = $state(0); // 0 means auto
 	let tableData = $state(`Category,Destroyed,Damaged
@@ -55,7 +54,6 @@ UAVs,0,0`);
 		if (saved) {
 			try {
 				const data = JSON.parse(saved);
-				chartType = data.chartType || chartType;
 				title = data.title || title;
 				tableData = data.tableData || tableData;
 				maxScaleValue = data.maxScaleValue || 0;
@@ -67,7 +65,7 @@ UAVs,0,0`);
 
 	// Save to localStorage whenever data changes
 	$effect(() => {
-		const data = { chartType, title, tableData, maxScaleValue };
+		const data = { title, tableData, maxScaleValue };
 		localStorage.setItem('militaryChartData', JSON.stringify(data));
 	});
 
@@ -114,16 +112,62 @@ Drones,3,3,0,0,0`;
 		isExporting = true;
 
 		try {
+			// Wait a bit for any transitions to complete
+			await new Promise((resolve) => setTimeout(resolve, 100));
+
 			const canvas = await html2canvas(chartElement, {
 				backgroundColor: '#1a1a1a',
 				scale: 2,
-				logging: false
+				logging: false,
+				useCORS: true,
+				allowTaint: true,
+				windowWidth: chartElement.scrollWidth,
+				windowHeight: chartElement.scrollHeight,
+				onclone: (clonedDoc) => {
+					// Replace oklch colors with standard hex colors
+					const clonedElement = clonedDoc.querySelector('[data-export-chart]');
+					if (clonedElement) {
+						clonedElement.querySelectorAll('*').forEach((el) => {
+							const htmlEl = el as HTMLElement;
+							const computedStyle = window.getComputedStyle(htmlEl);
+
+							// Get and set background color
+							if (
+								computedStyle.backgroundColor &&
+								computedStyle.backgroundColor !== 'rgba(0, 0, 0, 0)'
+							) {
+								htmlEl.style.backgroundColor = computedStyle.backgroundColor;
+							}
+
+							// Get and set text color
+							if (computedStyle.color) {
+								htmlEl.style.color = computedStyle.color;
+							}
+
+							// Get and set border color
+							if (computedStyle.borderColor) {
+								htmlEl.style.borderColor = computedStyle.borderColor;
+							}
+						});
+					}
+				}
 			});
 
-			const link = document.createElement('a');
-			link.download = `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.png`;
-			link.href = canvas.toDataURL('image/png');
-			link.click();
+			// Convert canvas to blob for better browser compatibility
+			canvas.toBlob((blob) => {
+				if (!blob) {
+					throw new Error('Failed to create image blob');
+				}
+
+				const url = URL.createObjectURL(blob);
+				const link = document.createElement('a');
+				link.download = `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.png`;
+				link.href = url;
+				link.click();
+
+				// Clean up the URL after a short delay
+				setTimeout(() => URL.revokeObjectURL(url), 100);
+			}, 'image/png');
 		} catch (error) {
 			console.error('Export failed:', error);
 			alert('Export failed. Please try again.');
@@ -138,10 +182,6 @@ Drones,3,3,0,0,0`;
 	}
 </script>
 
-<svelte:head>
-	<title>Military Loss Chart Builder</title>
-</svelte:head>
-
 <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 	<!-- Input Section -->
 	<div class="card bg-base-100 shadow-xl">
@@ -153,16 +193,6 @@ Drones,3,3,0,0,0`;
 					<span class="label-text text-xs">Chart Title</span>
 				</label>
 				<input type="text" bind:value={title} class="input-bordered input input-sm" />
-			</div>
-
-			<div class="form-control">
-				<label class="label py-1">
-					<span class="label-text text-xs">Chart Type</span>
-				</label>
-				<select class="select-bordered select select-sm" bind:value={chartType}>
-					<option value="horizontal">Horizontal Bar</option>
-					<option value="vertical">Vertical Bar</option>
-				</select>
 			</div>
 
 			<div class="form-control">
@@ -202,143 +232,85 @@ Drones,3,3,0,0,0`;
 	<!-- Chart Section -->
 	<div class="card bg-neutral text-neutral-content shadow-xl lg:col-span-2">
 		<div class="card-body">
-			<div bind:this={chartElement} class="rounded-lg bg-neutral p-4">
-				<h3 class="mb-6 text-center text-sm text-success md:text-base">{title}</h3>
+			<div bind:this={chartElement} data-export-chart class="relative rounded-lg bg-neutral p-4">
+				<!-- Branding Component -->
+				<Branding isMobile={false} />
 
-				{#if chartType === 'horizontal'}
-					<!-- Horizontal Bar Chart with Grid -->
-					<div class="relative">
-						<!-- Bars -->
-						<div class="relative space-y-2 pt-4 pb-6">
-							{#each chartData as item}
-								<div class="flex items-center gap-2 text-xs md:text-sm">
-									<div class="w-32 truncate text-right md:w-40" title={item.Category}>
-										{item.Category}
+				<h3 class="text-md mb-6 text-center font-semibold md:text-base">{title}</h3>
+
+				<!-- Horizontal Bar Chart with Grid -->
+				<div class="relative">
+					<!-- Bars -->
+					<div class="relative space-y-2 pt-4 pb-6">
+						{#each chartData as item}
+							<div class="flex items-center gap-2 text-xs md:text-sm">
+								<div class="w-32 truncate text-right md:w-40" title={item.Category}>
+									{item.Category}
+								</div>
+								<div class="relative flex flex-1 items-center gap-1">
+									<!-- Grid lines for this row -->
+									<div class="absolute inset-0 flex">
+										{#each Array(5) as _, i}
+											<div class="flex flex-1">
+												<div class="h-full w-px bg-gray-700"></div>
+											</div>
+										{/each}
+										<div class="h-full w-px bg-gray-700"></div>
 									</div>
-									<div class="relative flex flex-1 items-center gap-1">
-										<!-- Grid lines for this row -->
-										<div class="absolute inset-0 flex" style="left: 0; right: 2rem;">
-											{#each Array(6) as _, i}
-												<div class="flex flex-1">
-													<div class="h-full w-px bg-gray-700"></div>
-												</div>
-											{/each}
-										</div>
 
-										<!-- Bar content -->
-										<div class="relative z-10 flex flex-1 items-center gap-1">
-											{#if item.Destroyed > 0}
-												<div
-													class="flex h-6 items-center justify-center bg-error font-semibold text-white transition-all md:h-8"
-													style="width: {getBarWidth(item.Destroyed, 'destroyed')}"
-												>
-													<span class="px-2">{item.Destroyed}</span>
-												</div>
-											{/if}
-											{#if item.Damaged > 0}
-												<div
-													class="flex h-6 items-center justify-center bg-warning font-semibold text-black transition-all md:h-8"
-													style="width: {getBarWidth(item.Damaged, 'damaged')}"
-												>
-													<span class="px-2">{item.Damaged}</span>
-												</div>
-											{/if}
-										</div>
-										<span class="relative z-10 ml-2 w-8 text-gray-400"
+									<!-- Bar content -->
+									<div class="relative z-10 flex flex-1 items-center gap-1">
+										{#if item.Destroyed > 0}
+											<div
+												class="relative flex h-6 items-center justify-center bg-error font-semibold text-white transition-all md:h-8"
+												style="width: {getBarWidth(item.Destroyed, 'destroyed')}"
+											>
+												<span class="px-2">{item.Destroyed}</span>
+											</div>
+										{/if}
+										{#if item.Damaged > 0}
+											<div
+												class="relative flex h-6 items-center justify-center bg-warning font-semibold text-black transition-all md:h-8"
+												style="width: {getBarWidth(item.Damaged, 'damaged')}"
+											>
+												<span class="px-2">{item.Damaged}</span>
+											</div>
+										{/if}
+										<span class="relative z-10 ml-1 text-gray-400"
 											>{(item.Destroyed || 0) + (item.Damaged || 0)}</span
 										>
 									</div>
 								</div>
-							{/each}
-						</div>
-
-						<!-- Scale labels at bottom -->
-						<div class="flex items-center gap-2 text-xs md:text-sm">
-							<div class="w-32 md:w-40"></div>
-							<div class="flex flex-1" style="padding-right: 2rem;">
-								{#each Array(6) as _, i}
-									<div class="flex flex-1">
-										<span class="text-xs text-success"
-											>{Math.round((effectiveMaxValue * i) / 5)}</span
-										>
-									</div>
-								{/each}
 							</div>
-						</div>
+						{/each}
 					</div>
-				{:else}
-					<!-- Vertical Bar Chart with Grid -->
-					<div class="relative h-96">
-						<!-- Scale labels at top -->
-						<div class="absolute top-0 right-0 left-0 flex px-8">
-							{#each Array(6) as _, i}
-								<div class="flex flex-1 justify-start">
-									<span class="text-xs text-success"
-										>{Math.round((effectiveMaxValue * (5 - i)) / 5)}</span
+
+					<!-- Scale labels at bottom -->
+					<div class="flex items-center gap-2 text-xs md:text-sm">
+						<div class="w-32 md:w-40"></div>
+						<div class="flex flex-1">
+							{#each Array(5) as _, i}
+								<div class="flex flex-1">
+									<span class="text-xs text-success">{Math.round((effectiveMaxValue * i) / 5)}</span
 									>
 								</div>
 							{/each}
-						</div>
-
-						<!-- Grid lines and bars -->
-						<div class="relative h-full pt-6">
-							<!-- Grid lines -->
-							<div class="absolute inset-0 flex flex-col">
-								{#each Array(6) as _, i}
-									<div class="h-px w-full flex-1 bg-gray-700"></div>
-								{/each}
-							</div>
-
-							<!-- Bars -->
-							<div class="relative flex h-full items-end justify-around gap-1 px-8">
-								{#each chartData as item}
-									<div class="flex min-w-0 flex-1 flex-col items-center gap-1">
-										<div
-											class="flex h-full w-full flex-col-reverse items-center justify-start gap-1"
-										>
-											{#if item.Destroyed > 0}
-												<div
-													class="flex w-full items-center justify-center bg-error text-xs font-semibold text-white transition-all"
-													style="height: {getBarWidth(item.Destroyed, 'destroyed')}"
-												>
-													<span class="py-1">{item.Destroyed}</span>
-												</div>
-											{/if}
-											{#if item.Damaged > 0}
-												<div
-													class="flex w-full items-center justify-center bg-warning text-xs font-semibold text-black transition-all"
-													style="height: {getBarWidth(item.Damaged, 'damaged')}"
-												>
-													<span class="py-1">{item.Damaged}</span>
-												</div>
-											{/if}
-										</div>
-										<div
-											class="mt-2 w-20 origin-bottom-left rotate-45 truncate text-center text-xs"
-											title={item.Category}
-										>
-											{item.Category}
-										</div>
-									</div>
-								{/each}
-							</div>
+							<span class="text-xs text-success">{effectiveMaxValue}</span>
 						</div>
 					</div>
-				{/if}
+				</div>
 
 				<!-- Legend -->
 				<div class="mt-8 flex justify-center gap-6 text-xs md:text-sm">
 					<div class="flex items-center gap-2">
-						<div class="h-4 w-4 rounded bg-error"></div>
+						<div class="size-4 rounded bg-error"></div>
 						<span>Zerstört (Destroyed)</span>
 					</div>
 					<div class="flex items-center gap-2">
-						<div class="h-4 w-4 rounded bg-warning"></div>
+						<div class="size-4 rounded bg-warning"></div>
 						<span>Beschädigt (Damaged)</span>
 					</div>
 				</div>
-
-				<Branding isMobile={false} />
 			</div>
 		</div>
 	</div>
