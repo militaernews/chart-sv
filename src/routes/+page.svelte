@@ -5,7 +5,7 @@
 	import Branding from '$lib/components/Branding.svelte';
 
 	let title = $state('Russian Losses in Kharkiv');
-	let subtitle = $state('June 3, 2024');
+	let subtitle = $state('as of June 3, 2024');
 	let maxScaleValue = $state(0); // 0 means auto
 	let tableData = $state(`Category,Destroyed,Damaged
 Panzer,9,0
@@ -30,6 +30,7 @@ UAVs,0,0`);
 
 	let chartElement = $state(null);
 	let isExporting = $state(false);
+	let isLoaded = $state(false);
 
 	// Parse CSV data
 	const chartData = $derived.by(() => {
@@ -82,9 +83,43 @@ UAVs,0,0`);
 
 	const effectiveMaxValue = $derived(maxScaleValue > 0 ? maxScaleValue : maxValue);
 
-	// Load from memory on mount (removed localStorage)
-	onMount(() => {
-		// Data persists in memory during session
+	// Load from storage on mount
+	onMount(async () => {
+		const result = await window.storage.get('chartData').catch(() => null);
+		if (result?.value) {
+			const data = JSON.parse(result.value);
+			if (data.title !== undefined) title = data.title;
+			if (data.subtitle !== undefined) subtitle = data.subtitle;
+			if (data.maxScaleValue !== undefined) maxScaleValue = data.maxScaleValue;
+			if (data.tableData !== undefined) tableData = data.tableData;
+			if (data.legendColors !== undefined) legendColors = data.legendColors;
+		}
+		isLoaded = true;
+	});
+
+	// Save all data to storage whenever any value changes
+	$effect(() => {
+		if (!isLoaded) return;
+		const data = {
+			title,
+			subtitle,
+			maxScaleValue,
+			tableData,
+			legendColors
+		};
+		window.storage.set('chartData', JSON.stringify(data)).catch(console.error);
+	});
+
+	// Save all data to storage whenever any value changes
+	$effect(() => {
+		const data = {
+			title,
+			subtitle,
+			maxScaleValue,
+			tableData,
+			legendColors
+		};
+		window.storage.set('chartData', JSON.stringify(data)).catch(console.error);
 	});
 
 	function loadExample1() {
@@ -274,11 +309,13 @@ Drones,3,0,0,0`;
 				<!-- Branding Component -->
 				<Branding isMobile={false} />
 
-				<!-- Title with line separator -->
+				<!-- Title with optional divider and subtitle -->
 				<div class="mb-6 text-center">
 					<h3 class="text-md font-semibold md:text-base">{title}</h3>
-					<div class="mx-auto my-2 h-px w-48 bg-gray-600"></div>
-					<p class="text-xs text-gray-400 md:text-sm">{subtitle}</p>
+					{#if subtitle && subtitle.trim()}
+						<div class="mx-auto my-2 h-px w-48 bg-gray-600"></div>
+						<p class="text-xs text-gray-400 md:text-sm">{subtitle}</p>
+					{/if}
 				</div>
 
 				<!-- Horizontal Bar Chart with Grid -->
@@ -293,7 +330,7 @@ Drones,3,0,0,0`;
 								<div class="relative flex flex-1 items-center gap-1">
 									<!-- Grid lines for this row -->
 									<div class="absolute inset-0 flex">
-										{#each Array(5) as _, i}
+										{#each Array(4) as _, i}
 											<div class="flex flex-1">
 												<div class="h-full w-px bg-gray-600"></div>
 											</div>
@@ -329,13 +366,14 @@ Drones,3,0,0,0`;
 					<div class="flex items-center gap-2 text-xs md:text-sm">
 						<div class="w-32 md:w-40"></div>
 						<div class="flex flex-1">
-							{#each Array(5) as _, i}
+							{#each Array(4) as _, i}
 								<div class="flex flex-1">
-									<span class="text-xs text-success">{Math.round((effectiveMaxValue * i) / 5)}</span
+									<span class=" text-xs" style="color:#00ff00"
+										>{Math.round((effectiveMaxValue * i) / 4)}</span
 									>
 								</div>
 							{/each}
-							<span class="text-xs text-success">{effectiveMaxValue}</span>
+							<span class="text-xs" style="color:#00ff00">{effectiveMaxValue}</span>
 						</div>
 					</div>
 				</div>

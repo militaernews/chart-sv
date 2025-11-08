@@ -1,6 +1,6 @@
 {
   "theme_color": "#8936FF",
-  "background_color": "#2EC6FE",
+  "background_color": "#000000",
   "icons": [
     {
       "purpose": "maskable",
@@ -15,11 +15,11 @@
       "type": "image/png"
     }
   ],
-  "orientation": "portrait",
+  "orientation": "auto",
   "display": "standalone",
   "dir": "auto",
   "lang": "de",
-  "name": "GoBento",
-  "short_name": "GoBento",
-  "description": "Save food, one bento at a time."
+  "name": "Charts MN",
+  "short_name": "Charts MN",
+  "description": "Charts for Military News"
 }
