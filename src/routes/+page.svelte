@@ -4,7 +4,8 @@
 	import html2canvas from 'html2canvas-pro';
 	import Branding from '$lib/components/Branding.svelte';
 
-	let title = $state('Russian Losses in Kharkiv — June 3, 2024');
+	let title = $state('Russian Losses in Kharkiv');
+	let subtitle = $state('June 3, 2024');
 	let maxScaleValue = $state(0); // 0 means auto
 	let tableData = $state(`Category,Destroyed,Damaged
 Panzer,9,0
@@ -20,6 +21,12 @@ Radare und Jammer,1,0
 Lastkraftwagen,6,1
 Helikopter,0,0
 UAVs,0,0`);
+
+	// Default colors for legend items
+	let legendColors = $state({
+		Destroyed: '#ff0000',
+		Damaged: '#ffaa00'
+	});
 
 	let chartElement = $state(null);
 	let isExporting = $state(false);
@@ -39,38 +46,50 @@ UAVs,0,0`);
 				});
 				return obj;
 			})
-			.filter((item) => (item.Destroyed || 0) > 0 || (item.Damaged || 0) > 0);
+			.filter((item) => {
+				// Filter out Category column and check if any value > 0
+				return Object.keys(item).some((key) => key !== 'Category' && (item[key] || 0) > 0);
+			});
+	});
+
+	// Get legend items (all columns except Category and Total)
+	const legendItems = $derived.by(() => {
+		if (!tableData) return [];
+		const headers = tableData
+			.trim()
+			.split('\n')[0]
+			.split(',')
+			.map((h) => h.trim());
+		return headers.filter((h) => h !== 'Category' && h !== 'Total');
+	});
+
+	// Sync legendColors with current legend items
+	$effect(() => {
+		const newColors = { ...legendColors };
+		legendItems.forEach((item, index) => {
+			if (!newColors[item]) {
+				// Assign default colors
+				const defaultColors = ['#ff0000', '#ffaa00', '#ffdd00', '#666666'];
+				newColors[item] = defaultColors[index % defaultColors.length];
+			}
+		});
+		legendColors = newColors;
 	});
 
 	const maxValue = $derived(
-		Math.max(...chartData.flatMap((d) => [d.Destroyed || 0, d.Damaged || 0]))
+		Math.max(...chartData.flatMap((d) => legendItems.map((key) => d[key] || 0)))
 	);
 
 	const effectiveMaxValue = $derived(maxScaleValue > 0 ? maxScaleValue : maxValue);
 
-	// Load from localStorage on mount
+	// Load from memory on mount (removed localStorage)
 	onMount(() => {
-		const saved = localStorage.getItem('militaryChartData');
-		if (saved) {
-			try {
-				const data = JSON.parse(saved);
-				title = data.title || title;
-				tableData = data.tableData || tableData;
-				maxScaleValue = data.maxScaleValue || 0;
-			} catch (e) {
-				console.error('Failed to load saved data', e);
-			}
-		}
-	});
-
-	// Save to localStorage whenever data changes
-	$effect(() => {
-		const data = { title, tableData, maxScaleValue };
-		localStorage.setItem('militaryChartData', JSON.stringify(data));
+		// Data persists in memory during session
 	});
 
 	function loadExample1() {
-		title = 'Russian Losses in Kharkiv — June 3, 2024';
+		title = 'Russian Losses in Kharkiv';
+		subtitle = 'June 3, 2024';
 		tableData = `Category,Destroyed,Damaged
 Panzer,9,0
 Schützenpanzer,13,0
@@ -88,22 +107,23 @@ UAVs,0,0`;
 	}
 
 	function loadExample2() {
-		title = 'Russian 2024 Kharkiv Oblast Offensive Losses as of 2024-08-26';
-		tableData = `Category,Total,Destroyed,Abandoned,Captured,Damaged
-Tanks,24,22,0,2,0
-Armoured Fighting Vehicles,59,58,0,0,1
-Infantry Mobility Vehicles,4,4,0,0,0
-MLRS,1,1,0,0,0
-Self-propelled Artillery,3,1,0,0,2
-Towed Artillery,0,0,0,0,0
-Anti-aircraft Systems,3,3,0,0,0
-Command Vehicles,0,0,0,0,0
-Engineering,26,22,1,0,3
-Radars and Jammers,2,1,0,0,1
-Trucks,37,36,0,0,1
-Aircraft,0,0,0,0,0
-Helicopters,0,0,0,0,0
-Drones,3,3,0,0,0`;
+		title = 'Russian 2024 Kharkiv Oblast Offensive Losses';
+		subtitle = 'as of 2024-08-26';
+		tableData = `Category,Destroyed,Abandoned,Captured,Damaged
+Tanks,22,0,2,0
+Armoured Fighting Vehicles,58,0,0,1
+Infantry Mobility Vehicles,4,0,0,0
+MLRS,1,0,0,0
+Self-propelled Artillery,1,0,0,2
+Towed Artillery,0,0,0,0
+Anti-aircraft Systems,3,0,0,0
+Command Vehicles,0,0,0,0
+Engineering,22,1,0,3
+Radars and Jammers,1,0,0,1
+Trucks,36,0,0,1
+Aircraft,0,0,0,0
+Helicopters,0,0,0,0
+Drones,3,0,0,0`;
 	}
 
 	async function exportAsImage() {
@@ -112,7 +132,6 @@ Drones,3,3,0,0,0`;
 		isExporting = true;
 
 		try {
-			// Wait a bit for any transitions to complete
 			await new Promise((resolve) => setTimeout(resolve, 100));
 
 			const canvas = await html2canvas(chartElement, {
@@ -124,14 +143,12 @@ Drones,3,3,0,0,0`;
 				windowWidth: chartElement.scrollWidth,
 				windowHeight: chartElement.scrollHeight,
 				onclone: (clonedDoc) => {
-					// Replace oklch colors with standard hex colors
 					const clonedElement = clonedDoc.querySelector('[data-export-chart]');
 					if (clonedElement) {
 						clonedElement.querySelectorAll('*').forEach((el) => {
 							const htmlEl = el as HTMLElement;
 							const computedStyle = window.getComputedStyle(htmlEl);
 
-							// Get and set background color
 							if (
 								computedStyle.backgroundColor &&
 								computedStyle.backgroundColor !== 'rgba(0, 0, 0, 0)'
@@ -139,12 +156,10 @@ Drones,3,3,0,0,0`;
 								htmlEl.style.backgroundColor = computedStyle.backgroundColor;
 							}
 
-							// Get and set text color
 							if (computedStyle.color) {
 								htmlEl.style.color = computedStyle.color;
 							}
 
-							// Get and set border color
 							if (computedStyle.borderColor) {
 								htmlEl.style.borderColor = computedStyle.borderColor;
 							}
@@ -153,7 +168,6 @@ Drones,3,3,0,0,0`;
 				}
 			});
 
-			// Convert canvas to blob for better browser compatibility
 			canvas.toBlob((blob) => {
 				if (!blob) {
 					throw new Error('Failed to create image blob');
@@ -165,7 +179,6 @@ Drones,3,3,0,0,0`;
 				link.href = url;
 				link.click();
 
-				// Clean up the URL after a short delay
 				setTimeout(() => URL.revokeObjectURL(url), 100);
 			}, 'image/png');
 		} catch (error) {
@@ -176,8 +189,8 @@ Drones,3,3,0,0,0`;
 		}
 	}
 
-	function getBarWidth(value, type) {
-		const percentage = (value / effectiveMaxValue) * 100;
+	function getBarWidth(value, maxVal) {
+		const percentage = (value / maxVal) * 100;
 		return `${Math.min(percentage, 100)}%`;
 	}
 </script>
@@ -193,6 +206,13 @@ Drones,3,3,0,0,0`;
 					<span class="label-text text-xs">Chart Title</span>
 				</label>
 				<input type="text" bind:value={title} class="input-bordered input input-sm" />
+			</div>
+
+			<div class="form-control">
+				<label class="label py-1">
+					<span class="label-text text-xs">Subtitle/Date</span>
+				</label>
+				<input type="text" bind:value={subtitle} class="input-bordered input input-sm" />
 			</div>
 
 			<div class="form-control">
@@ -218,6 +238,24 @@ Drones,3,3,0,0,0`;
 				></textarea>
 			</div>
 
+			<div class="form-control">
+				<label class="label py-1">
+					<span class="label-text text-xs">Legend Colors</span>
+				</label>
+				<div class="space-y-2">
+					{#each legendItems as item}
+						<div class="flex items-center gap-2">
+							<input
+								type="color"
+								bind:value={legendColors[item]}
+								class="h-8 w-12 cursor-pointer rounded border"
+							/>
+							<span class="text-xs">{item}</span>
+						</div>
+					{/each}
+				</div>
+			</div>
+
 			<div class="mt-2 flex flex-wrap gap-1">
 				<button class="btn btn-outline btn-xs" onclick={loadExample1}> Example 1 </button>
 				<button class="btn btn-outline btn-xs" onclick={loadExample2}> Example 2 </button>
@@ -236,7 +274,12 @@ Drones,3,3,0,0,0`;
 				<!-- Branding Component -->
 				<Branding isMobile={false} />
 
-				<h3 class="text-md mb-6 text-center font-semibold md:text-base">{title}</h3>
+				<!-- Title with line separator -->
+				<div class="mb-6 text-center">
+					<h3 class="text-md font-semibold md:text-base">{title}</h3>
+					<div class="mx-auto my-2 h-px w-48 bg-gray-600"></div>
+					<p class="text-xs text-gray-400 md:text-sm">{subtitle}</p>
+				</div>
 
 				<!-- Horizontal Bar Chart with Grid -->
 				<div class="relative">
@@ -252,33 +295,30 @@ Drones,3,3,0,0,0`;
 									<div class="absolute inset-0 flex">
 										{#each Array(5) as _, i}
 											<div class="flex flex-1">
-												<div class="h-full w-px bg-gray-700"></div>
+												<div class="h-full w-px bg-gray-600"></div>
 											</div>
 										{/each}
-										<div class="h-full w-px bg-gray-700"></div>
+										<div class="h-full w-px bg-gray-600"></div>
 									</div>
 
 									<!-- Bar content -->
 									<div class="relative z-10 flex flex-1 items-center gap-1">
-										{#if item.Destroyed > 0}
-											<div
-												class="relative flex h-6 items-center justify-center bg-error font-semibold text-white transition-all md:h-8"
-												style="width: {getBarWidth(item.Destroyed, 'destroyed')}"
-											>
-												<span class="px-2">{item.Destroyed}</span>
-											</div>
-										{/if}
-										{#if item.Damaged > 0}
-											<div
-												class="relative flex h-6 items-center justify-center bg-warning font-semibold text-black transition-all md:h-8"
-												style="width: {getBarWidth(item.Damaged, 'damaged')}"
-											>
-												<span class="px-2">{item.Damaged}</span>
-											</div>
-										{/if}
-										<span class="relative z-10 ml-1 text-gray-400"
-											>{(item.Destroyed || 0) + (item.Damaged || 0)}</span
-										>
+										{#each legendItems as legendItem}
+											{#if item[legendItem] > 0}
+												<div
+													class="relative flex h-6 items-center justify-center font-semibold text-white transition-all md:h-8"
+													style="width: {getBarWidth(
+														item[legendItem],
+														effectiveMaxValue
+													)}; background-color: {legendColors[legendItem]}"
+												>
+													<span class="px-2">{item[legendItem]}</span>
+												</div>
+											{/if}
+										{/each}
+										<span class="relative z-10 ml-1 text-gray-400">
+											{legendItems.reduce((sum, key) => sum + (item[key] || 0), 0)}
+										</span>
 									</div>
 								</div>
 							</div>
@@ -300,16 +340,14 @@ Drones,3,3,0,0,0`;
 					</div>
 				</div>
 
-				<!-- Legend -->
-				<div class="mt-8 flex justify-center gap-6 text-xs md:text-sm">
-					<div class="flex items-center gap-2">
-						<div class="size-4 rounded bg-error"></div>
-						<span>Zerstört (Destroyed)</span>
-					</div>
-					<div class="flex items-center gap-2">
-						<div class="size-4 rounded bg-warning"></div>
-						<span>Beschädigt (Damaged)</span>
-					</div>
+				<!-- Dynamic Legend -->
+				<div class="mt-8 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
+					{#each legendItems as item}
+						<div class="flex items-center gap-2">
+							<div class="size-4 rounded" style="background-color: {legendColors[item]}" />
+							<span>{item}</span>
+						</div>
+					{/each}
 				</div>
 			</div>
 		</div>
