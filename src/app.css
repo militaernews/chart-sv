@@ -1,0 +1,23 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+@plugin '@tailwindcss/forms';
+@plugin 'daisyui' {
+	themes:
+		dark --default,
+		dark --prefersdark;
+}
+
+@layer base {
+	@theme {
+		--font-sans: 'HPSimplified', system-ui, sans-serif;
+	}
+
+	@font-face {
+		font-family: 'HPSimplified';
+		src: url('/fonts/HPSimplified.ttf') format('truetype');
+
+		font-weight: 400;
+		font-style: normal;
+		font-display: swap;
+	}
+}
