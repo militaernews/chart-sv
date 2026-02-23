@@ -278,7 +278,7 @@ Drones,3,0,0,0`;
 					<span class="label-text text-xs">Legend Colors</span>
 				</label>
 				<div class="space-y-2">
-					{#each legendItems as item}
+					{#each legendItems as item (item)}
 						<div class="flex items-center gap-2">
 							<input
 								type="color"
@@ -322,7 +322,7 @@ Drones,3,0,0,0`;
 				<div class="relative">
 					<!-- Bars -->
 					<div class="relative space-y-2 pt-4 pb-6">
-						{#each chartData as item}
+						{#each chartData as item (item)}
 							<div class="flex items-center gap-2 text-xs md:text-sm">
 								<div class="w-32 truncate text-right md:w-40" title={item.Category}>
 									{item.Category}
@@ -330,7 +330,7 @@ Drones,3,0,0,0`;
 								<div class="relative flex flex-1 items-center gap-1">
 									<!-- Grid lines for this row -->
 									<div class="absolute inset-0 flex">
-										{#each Array(4) as _, i}
+										{#each Array(4) as _, i (i)}
 											<div class="flex flex-1">
 												<div class="h-full w-px bg-gray-600"></div>
 											</div>
@@ -340,7 +340,7 @@ Drones,3,0,0,0`;
 
 									<!-- Bar content -->
 									<div class="relative z-10 flex flex-1 items-center gap-1">
-										{#each legendItems as legendItem}
+										{#each legendItems as legendItem (legendItem)}
 											{#if item[legendItem] > 0}
 												<div
 													class="relative flex h-6 items-center justify-center font-semibold text-white transition-all md:h-8"
@@ -366,11 +366,11 @@ Drones,3,0,0,0`;
 					<div class="flex items-center gap-2 text-xs md:text-sm">
 						<div class="w-32 md:w-40"></div>
 						<div class="flex flex-1">
-							{#each Array(4) as _, i}
+							{#each { length: 4 }, i (i)}
 								<div class="flex flex-1">
-									<span class=" text-xs" style="color:#00ff00"
-										>{Math.round((effectiveMaxValue * i) / 4)}</span
-									>
+									<span class="text-xs" style="color:#00ff00">
+										{Math.round((effectiveMaxValue * i) / 4)}
+									</span>
 								</div>
 							{/each}
 							<span class="text-xs" style="color:#00ff00">{effectiveMaxValue}</span>
@@ -380,7 +380,7 @@ Drones,3,0,0,0`;
 
 				<!-- Dynamic Legend -->
 				<div class="mt-8 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
-					{#each legendItems as item}
+					{#each legendItems as item (item)}
 						<div class="flex items-center gap-2">
 							<div class="size-4 rounded" style="background-color: {legendColors[item]}" />
 							<span>{item}</span>
