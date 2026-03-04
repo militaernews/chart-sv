@@ -8,29 +8,29 @@
 	import ILineChart from '~icons/fluent/arrow-trending-24-regular';
 	import ICamera from '~icons/fluent/camera-16-regular';
 	import IClipboard from '~icons/fluent/clipboard-paste-20-regular';
-	import ICalendar from '~icons/fluent/calendar-ltr-20-regular';
 	import IDismiss from '~icons/fluent/dismiss-16-regular';
+	import ISettings from '~icons/fluent/settings-16-regular';
 
 	type ChartMode = 'bar' | 'line';
 	type ColType = 'text' | 'number' | 'date';
 
-	const COL_TYPE_ICONS: Record<ColType, string> = { text: 'T', number: '#', date: 'D' };
 	const COL_TYPE_CYCLE: ColType[] = ['text', 'number', 'date'];
 
-	// ── STATE────
+	// ── STATE ────────────────────────────────────────────────────────────────
 
 	let chartMode = $state<ChartMode>('bar');
 	let title = $state('Russian Losses in Kharkiv');
 	let subtitle = $state('as of June 3, 2024');
 	let maxScaleValue = $state(0);
-	let showColTypes = $state(false); // NEW: toggle column type badges
 
 	type TableState = {
 		headers: string[];
-		colTypes: ColType[]; // one per column
+		colTypes: ColType[];
 		rows: string[][];
 	};
 
+	// These are the authoritative $state objects.
+	// NEVER bind through a $derived — Svelte 5 won't write back through derived proxies.
 	let barTable = $state<TableState>({
 		headers: ['Category', 'Destroyed', 'Damaged'],
 		colTypes: ['text', 'number', 'number'],
@@ -81,23 +81,90 @@
 	let csvPasteText = $state('');
 	let csvPasteError = $state('');
 
-	// ── TYPE DETECTION ────────────────────────────────────────────────────────
+	// ── COLUMN SETTINGS MODAL ─────────────────────────────────────────────────
+
+	let modalOpen = $state(false);
+	let modalColIdx = $state(0);
+
+	const modalColType = $derived(
+		chartMode === 'bar'
+			? (barTable.colTypes[modalColIdx] ?? 'text')
+			: (lineTable.colTypes[modalColIdx] ?? 'text')
+	);
+
+	const modalColor = $derived(
+		chartMode === 'bar'
+			? (legendColors[barTable.headers[modalColIdx]] ?? '#888888')
+			: (lineColors[lineTable.headers[modalColIdx]] ?? '#888888')
+	);
+
+	function openColModal(colIdx: number) {
+		modalColIdx = colIdx;
+		modalOpen = true;
+	}
+
+	function setModalColType(t: ColType) {
+		if (chartMode === 'bar') barTable.colTypes[modalColIdx] = t;
+		else lineTable.colTypes[modalColIdx] = t;
+	}
+
+	function setModalColor(color: string) {
+		const key =
+			chartMode === 'bar' ? barTable.headers[modalColIdx] : lineTable.headers[modalColIdx];
+		if (!key) return;
+		if (chartMode === 'bar') legendColors[key] = color;
+		else lineColors[key] = color;
+	}
+
+	// ── TABLE MUTATIONS — always target barTable/lineTable directly ───────────
+
+	function tbl(): TableState {
+		return chartMode === 'bar' ? barTable : lineTable;
+	}
+
+	function addRow() {
+		const t = tbl();
+		t.rows.push(
+			t.headers.map((_, i) => {
+				const type = t.colTypes[i] ?? 'text';
+				if (i === 0 && type === 'text') return 'New';
+				if (type === 'date') return new Date().toISOString().slice(0, 10);
+				return '0';
+			})
+		);
+	}
+
+	function removeRow(idx: number) {
+		tbl().rows.splice(idx, 1);
+	}
+
+	function addColumn() {
+		const t = tbl();
+		const name = `Col${t.headers.length}`;
+		t.headers.push(name);
+		t.colTypes.push('number');
+		t.rows.forEach((r) => r.push('0'));
+	}
+
+	function removeColumn(colIdx: number) {
+		const t = tbl();
+		if (t.headers.length <= 2) return;
+		t.headers.splice(colIdx, 1);
+		t.colTypes.splice(colIdx, 1);
+		t.rows.forEach((r) => r.splice(colIdx, 1));
+	}
+
+	// ── CSV ───────────────────────────────────────────────────────────────────
 
 	const DATE_RE = /^\d{4}-\d{2}-\d{2}$|^\d{2}[./]\d{2}[./]\d{4}$/;
 
 	function detectColType(values: string[]): ColType {
-		const nonEmpty = values.filter((v) => v.trim() !== '');
-		if (nonEmpty.length === 0) return 'text';
-		if (nonEmpty.every((v) => DATE_RE.test(v.trim()))) return 'date';
-		if (nonEmpty.every((v) => !isNaN(Number(v.trim())))) return 'number';
+		const ne = values.filter((v) => v.trim() !== '');
+		if (!ne.length) return 'text';
+		if (ne.every((v) => DATE_RE.test(v.trim()))) return 'date';
+		if (ne.every((v) => !isNaN(Number(v.trim())))) return 'number';
 		return 'text';
 	}
-
-	function inferColTypes(headers: string[], rows: string[][]): ColType[] {
-		return headers.map((_, colIdx) => detectColType(rows.map((r) => r[colIdx] ?? '')));
-	}
-
-	// ── CSV HELPERS ───────────────────────────────────────────────────────────
 
 	function csvToTable(csv: string): TableState | null {
 		const lines = csv.trim().split(/\r?\n/).filter(Boolean);
@@ -109,73 +176,8 @@
 			while (cells.length < headers.length) cells.push('');
 			return cells.slice(0, headers.length).map((s) => s.trim());
 		});
-		return { headers, colTypes: inferColTypes(headers, rows), rows };
-	}
-
-	// ── CURRENT TABLE ─────────────────────────────────────────────────────────
-	// Use a getter/setter pair so all helpers always operate on the live $state object.
-
-	function getTable(): TableState {
-		return chartMode === 'bar' ? barTable : lineTable;
-	}
-
-	function setTable(t: TableState) {
-		if (chartMode === 'bar') barTable = t;
-		else lineTable = t;
-	}
-
-	// Convenience read-only derived for the template
-	const currentTable = $derived(chartMode === 'bar' ? barTable : lineTable);
-
-	// ── TABLE EDITING ─────────────────────────────────────────────────────────
-	// Directly mutate the live $state proxy — Svelte 5 deep-tracks these.
-
-	function updateCell(rowIdx: number, colIdx: number, val: string) {
-		const tbl = getTable();
-		tbl.rows[rowIdx][colIdx] = val;
-	}
-
-	function updateHeader(colIdx: number, val: string) {
-		getTable().headers[colIdx] = val;
-	}
-
-	function cycleColType(colIdx: number) {
-		const tbl = getTable();
-		const cur = tbl.colTypes[colIdx] ?? 'text';
-		tbl.colTypes[colIdx] =
-			COL_TYPE_CYCLE[(COL_TYPE_CYCLE.indexOf(cur) + 1) % COL_TYPE_CYCLE.length];
-	}
-
-	function addRow() {
-		const tbl = getTable();
-		tbl.rows.push(
-			tbl.headers.map((_, i) => {
-				const type = tbl.colTypes[i] ?? 'text';
-				if (i === 0 && type === 'text') return 'New';
-				if (type === 'date') return new Date().toISOString().slice(0, 10);
-				return '0';
-			})
-		);
-	}
-
-	function removeRow(idx: number) {
-		getTable().rows.splice(idx, 1);
-	}
-
-	function addColumn() {
-		const tbl = getTable();
-		const name = `Col${tbl.headers.length}`;
-		tbl.headers.push(name);
-		tbl.colTypes.push('number');
-		tbl.rows.forEach((r) => r.push('0'));
-	}
-
-	function removeColumn(colIdx: number) {
-		const tbl = getTable();
-		if (tbl.headers.length <= 2) return;
-		tbl.headers.splice(colIdx, 1);
-		tbl.colTypes.splice(colIdx, 1);
-		tbl.rows.forEach((r) => r.splice(colIdx, 1));
+		const colTypes = headers.map((_, ci) => detectColType(rows.map((r) => r[ci] ?? '')));
+		return { headers, colTypes, rows };
 	}
 
 	function applyCSVPaste() {
@@ -185,7 +187,8 @@
 			csvPasteError = 'Could not parse CSV. Ensure at least 2 columns and a header row.';
 			return;
 		}
-		setTable(parsed);
+		if (chartMode === 'bar') barTable = parsed;
+		else lineTable = parsed;
 		csvPasteText = '';
 		csvPasteVisible = false;
 	}
@@ -222,29 +225,14 @@
 	const effectiveBarMax = $derived(maxScaleValue > 0 ? maxScaleValue : barMaxValue);
 	const colorFill = $derived((d: { type: string }) => legendColors[d.type] ?? '#888');
 
-	// NEW: per-category row totals for the sum label
-	const barRowTotals = $derived.by(() => {
-		const map: Record<string, number> = {};
-		for (const item of parsedBarData) {
-			map[item.Category] = legendItems.reduce((s, k) => s + (item[k] || 0), 0);
-		}
-		return map;
-	});
-
-	// data for individual segment labels (midpoint x for each segment)
 	const barSegmentLabels = $derived.by(() => {
-		const labels: { category: string; x: number; label: string; color: string }[] = [];
+		const labels: { category: string; x: number; label: string }[] = [];
 		for (const item of parsedBarData) {
 			let offset = 0;
 			for (const key of legendItems) {
 				const v = item[key] || 0;
 				if (v > 0) {
-					labels.push({
-						category: item.Category,
-						x: offset + v / 2,
-						label: String(v),
-						color: legendColors[key] ?? '#888'
-					});
+					labels.push({ category: item.Category, x: offset + v / 2, label: String(v) });
 					offset += v;
 				}
 			}
@@ -252,7 +240,6 @@
 		return labels;
 	});
 
-	// data for total labels (end of full bar)
 	const barTotalLabels = $derived.by(() =>
 		parsedBarData
 			.map((item) => {
@@ -304,10 +291,10 @@
 		lineColors = c;
 	});
 
-	// ── STORAGE──
+	// ── STORAGE ───────────────────────────────────────────────────────────────
 
 	onMount(async () => {
-		const result = await window.storage.get('chartDataV3').catch(() => null);
+		const result = await window.storage.get('chartDataV4').catch(() => null);
 		if (result?.value) {
 			try {
 				const data = JSON.parse(result.value);
@@ -328,7 +315,7 @@
 		if (!isLoaded) return;
 		window.storage
 			.set(
-				'chartDataV3',
+				'chartDataV4',
 				JSON.stringify({
 					title,
 					subtitle,
@@ -343,7 +330,7 @@
 			.catch(console.error);
 	});
 
-	// ── EXAMPLES
+	// ── EXAMPLES ──────────────────────────────────────────────────────────────
 
 	function loadBarExample1() {
 		chartMode = 'bar';
@@ -421,7 +408,7 @@
 		};
 	}
 
-	// ── EXPORT───
+	// ── EXPORT ────────────────────────────────────────────────────────────────
 
 	async function exportAsImage() {
 		if (!chartElement) return;
@@ -464,6 +451,93 @@
 		}
 	}
 </script>
+
+<!-- ── COLUMN SETTINGS MODAL ──────────────────────────────────────────────── -->
+{#if modalOpen}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+		onclick={() => (modalOpen = false)}
+		role="dialog"
+		aria-modal="true"
+	>
+		<div class="card w-80 bg-base-100 shadow-2xl" onclick={(e) => e.stopPropagation()}>
+			<div class="card-body gap-4 p-5">
+				<div class="flex items-center justify-between">
+					<h3 class="text-base font-semibold">Column Settings</h3>
+					<button class="btn btn-circle btn-ghost btn-xs" onclick={() => (modalOpen = false)}>
+						<IDismiss class="size-4" />
+					</button>
+				</div>
+
+				<!-- Column name -->
+				<div class="form-control gap-1">
+					<label class="label py-0"><span class="label-text text-xs">Column name</span></label>
+					{#if chartMode === 'bar'}
+						<input
+							type="text"
+							bind:value={barTable.headers[modalColIdx]}
+							class="input-bordered input input-sm"
+						/>
+					{:else}
+						<input
+							type="text"
+							bind:value={lineTable.headers[modalColIdx]}
+							class="input-bordered input input-sm"
+						/>
+					{/if}
+				</div>
+
+				<!-- Data type -->
+				<div class="form-control gap-1">
+					<label class="label py-0"><span class="label-text text-xs">Data type</span></label>
+					<div class="join w-full">
+						{#each COL_TYPE_CYCLE as t}
+							<button
+								class="btn join-item flex-1 btn-sm {modalColType === t
+									? 'btn-primary'
+									: 'btn-outline'}"
+								onclick={() => setModalColType(t)}
+							>
+								{t === 'date' ? '📅' : t === 'number' ? '#' : 'T'}&nbsp;{t}
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<!-- Series color (only for data columns, not the category/x column) -->
+				{#if modalColIdx > 0}
+					<div class="form-control gap-1">
+						<label class="label py-0"><span class="label-text text-xs">Series color</span></label>
+						<div class="flex items-center gap-3">
+							<input
+								type="color"
+								value={modalColor}
+								oninput={(e) => setModalColor((e.target as HTMLInputElement).value)}
+								class="h-10 w-16 cursor-pointer rounded border"
+							/>
+							<span class="font-mono text-sm text-base-content/70">{modalColor}</span>
+						</div>
+					</div>
+				{/if}
+
+				<!-- Remove column -->
+				{#if (chartMode === 'bar' ? barTable.headers : lineTable.headers).length > 2 && modalColIdx > 0}
+					<button
+						class="btn w-full btn-outline btn-sm btn-error"
+						onclick={() => {
+							removeColumn(modalColIdx);
+							modalOpen = false;
+						}}
+					>
+						<IDismiss class="mr-1 size-4" /> Remove this column
+					</button>
+				{/if}
+
+				<button class="btn btn-sm btn-primary" onclick={() => (modalOpen = false)}>Done</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 	<!-- ── CONFIG PANEL ── -->
@@ -546,11 +620,7 @@
 			</div>
 
 			<button class="btn w-full btn-sm btn-primary" onclick={exportAsImage} disabled={isExporting}>
-				{#if isExporting}
-					Exporting…
-				{:else}
-					<ICamera class="mr-1 inline size-4" /> Export PNG
-				{/if}
+				{#if isExporting}Exporting…{:else}<ICamera class="mr-1 inline size-4" /> Export PNG{/if}
 			</button>
 		</div>
 	</div>
@@ -581,7 +651,6 @@
 							class="color-gray-400 font-size-12 bg-transparent"
 						>
 							<BarX data={barChartData} x="value" y="category" fill={colorFill} inset={1} />
-							<!-- Segment value labels (white, centered in each segment) -->
 							<Text
 								data={barSegmentLabels}
 								x="x"
@@ -593,7 +662,6 @@
 								textAnchor="middle"
 								dy={1}
 							/>
-							<!-- Total sum labels (grey, just past end of bar) -->
 							<Text
 								data={barTotalLabels}
 								x="x"
@@ -606,7 +674,6 @@
 								dx={4}
 								dy={1}
 							/>
-							<!-- CHANGED: x-axis tick color from #00ff00 to #9ca3af (grey) -->
 							<AxisX tickFormat={(d) => String(d)} style="color: #9ca3af; font-size: 11px;" />
 							<AxisY style="color: #e5e7eb; font-size: 11px;" />
 							<RuleX x={0} />
@@ -634,7 +701,6 @@
 								<Line data={series.points} x="x" y="y" stroke={series.color} strokeWidth={2} />
 								<Dot data={series.points} x="x" y="y" fill={series.color} r={3} />
 							{/each}
-							<!-- CHANGED: x-axis tick color from #00ff00 to #9ca3af (grey) -->
 							<AxisX tickFormat={(d) => String(d)} style="color: #9ca3af; font-size: 11px;" />
 							<AxisY ticks={6} style="color: #e5e7eb; font-size: 11px;" />
 						</Plot>
@@ -660,14 +726,6 @@
 					<div class="flex flex-wrap gap-1">
 						<button class="btn btn-outline btn-xs" onclick={addRow}>+ Row</button>
 						<button class="btn btn-outline btn-xs" onclick={addColumn}>+ Col</button>
-						<!-- NEW: toggle for column type badges -->
-						<button
-							class="btn btn-xs {showColTypes ? 'btn-secondary' : 'btn-outline'}"
-							onclick={() => (showColTypes = !showColTypes)}
-							title="Toggle column type badges"
-						>
-							{showColTypes ? 'Hide Types' : 'Col Types'}
-						</button>
 						<button
 							class="btn btn-xs {csvPasteVisible ? 'btn-warning' : 'btn-outline'}"
 							onclick={() => {
@@ -711,53 +769,28 @@
 					</div>
 				{/if}
 
-				<!-- Editable table — #key forces full remount on chart mode switch so inputs show correct values -->
-				{#key chartMode}
+				<!--
+					Two separate table blocks, each binding directly into barTable / lineTable ($state).
+					This is the ONLY correct pattern in Svelte 5 — binding through a $derived breaks writes.
+				-->
+				{#if chartMode === 'bar'}
 					<div class="overflow-x-auto rounded-lg border border-base-300">
 						<table class="table w-full table-xs">
 							<thead>
 								<tr class="bg-base-200">
-									{#each currentTable.headers as _h, colIdx (colIdx)}
-										{@const colType = currentTable.colTypes[colIdx] ?? 'text'}
+									{#each barTable.headers as _h, colIdx (colIdx)}
 										<th class="p-0">
-											<div class="group flex flex-col">
-												{#if showColTypes}
-													<div class="flex items-center justify-between gap-1 px-1 pt-1">
-														<button
-															class="badge shrink-0 cursor-pointer font-mono badge-xs transition-colors select-none hover:badge-primary
-																{colType === 'number' ? 'badge-accent' : colType === 'date' ? 'badge-info' : 'badge-ghost'}"
-															onclick={() => cycleColType(colIdx)}
-															title="Click to cycle type: text → number → date"
-														>
-															{#if colType === 'date'}
-																<ICalendar class="size-3" />
-															{:else}
-																{COL_TYPE_ICONS[colType]}
-															{/if}
-														</button>
-														{#if currentTable.headers.length > 2 && colIdx > 0}
-															<button
-																class="px-0.5 text-xs leading-none text-error opacity-0 transition-opacity group-hover:opacity-100"
-																onclick={() => removeColumn(colIdx)}
-																title="Remove column"><IDismiss class="size-3" /></button
-															>
-														{/if}
-													</div>
-												{:else if currentTable.headers.length > 2 && colIdx > 0}
-													<div class="flex justify-end px-1 pt-1">
-														<button
-															class="px-0.5 text-xs leading-none text-error opacity-0 transition-opacity group-hover:opacity-100"
-															onclick={() => removeColumn(colIdx)}
-															title="Remove column"><IDismiss class="size-3" /></button
-														>
-													</div>
-												{/if}
-												<!-- bind:value directly into $state proxy for instant reactivity -->
+											<div class="flex items-center gap-0.5 px-1 pt-1 pb-0">
 												<input
 													type="text"
-													bind:value={currentTable.headers[colIdx]}
-													class="input input-xs w-full min-w-16 input-ghost px-2 text-xs font-semibold focus:bg-base-100"
+													bind:value={barTable.headers[colIdx]}
+													class="input input-xs min-w-12 flex-1 input-ghost px-1 text-xs font-semibold focus:bg-base-100"
 												/>
+												<button
+													class="btn shrink-0 px-0.5 text-base-content/30 btn-ghost btn-xs hover:text-primary"
+													onclick={() => openColModal(colIdx)}
+													title="Column settings"><ISettings class="size-3.5" /></button
+												>
 											</div>
 										</th>
 									{/each}
@@ -765,10 +798,10 @@
 								</tr>
 							</thead>
 							<tbody>
-								{#each currentTable.rows as _row, rowIdx (rowIdx)}
+								{#each barTable.rows as _row, rowIdx (rowIdx)}
 									<tr class="group hover:bg-base-200/40">
-										{#each currentTable.rows[rowIdx] as _cell, colIdx (colIdx)}
-											{@const colType = currentTable.colTypes[colIdx] ?? 'text'}
+										{#each barTable.rows[rowIdx] as _cell, colIdx (colIdx)}
+											{@const colType = barTable.colTypes[colIdx] ?? 'text'}
 											<td class="p-0">
 												<input
 													type={colType === 'number'
@@ -776,7 +809,7 @@
 														: colType === 'date'
 															? 'date'
 															: 'text'}
-													bind:value={currentTable.rows[rowIdx][colIdx]}
+													bind:value={barTable.rows[rowIdx][colIdx]}
 													class="input input-xs w-full min-w-12 input-ghost px-2 text-xs focus:bg-base-100
 														{colType === 'number' ? 'text-right tabular-nums' : ''}"
 												/>
@@ -794,23 +827,65 @@
 							</tbody>
 						</table>
 					</div>
-				{/key}
-
-				<!-- Legend — only shown when col types are visible -->
-				{#if showColTypes}
-					<div class="mt-2 flex flex-wrap gap-3 text-xs text-base-content/50">
-						<span class="flex items-center gap-1">
-							<span class="badge badge-ghost font-mono badge-xs">T</span> text
-						</span>
-						<span class="flex items-center gap-1">
-							<span class="badge font-mono badge-xs badge-accent">#</span> number
-						</span>
-						<span class="flex items-center gap-1">
-							<span class="badge font-mono badge-xs badge-info"><ICalendar class="size-3" /></span> date
-						</span>
-						<span class="ml-auto">Click a badge to cycle the column type.</span>
+				{:else}
+					<div class="overflow-x-auto rounded-lg border border-base-300">
+						<table class="table w-full table-xs">
+							<thead>
+								<tr class="bg-base-200">
+									{#each lineTable.headers as _h, colIdx (colIdx)}
+										<th class="p-0">
+											<div class="flex items-center gap-0.5 px-1 pt-1 pb-0">
+												<input
+													type="text"
+													bind:value={lineTable.headers[colIdx]}
+													class="input input-xs min-w-12 flex-1 input-ghost px-1 text-xs font-semibold focus:bg-base-100"
+												/>
+												<button
+													class="btn shrink-0 px-0.5 text-base-content/30 btn-ghost btn-xs hover:text-primary"
+													onclick={() => openColModal(colIdx)}
+													title="Column settings"><ISettings class="size-3.5" /></button
+												>
+											</div>
+										</th>
+									{/each}
+									<th class="w-6 p-0"></th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each lineTable.rows as _row, rowIdx (rowIdx)}
+									<tr class="group hover:bg-base-200/40">
+										{#each lineTable.rows[rowIdx] as _cell, colIdx (colIdx)}
+											{@const colType = lineTable.colTypes[colIdx] ?? 'text'}
+											<td class="p-0">
+												<input
+													type={colType === 'number'
+														? 'number'
+														: colType === 'date'
+															? 'date'
+															: 'text'}
+													bind:value={lineTable.rows[rowIdx][colIdx]}
+													class="input input-xs w-full min-w-12 input-ghost px-2 text-xs focus:bg-base-100
+														{colType === 'number' ? 'text-right tabular-nums' : ''}"
+												/>
+											</td>
+										{/each}
+										<td class="w-6 p-0">
+											<button
+												class="btn px-1 text-error opacity-0 btn-ghost btn-xs group-hover:opacity-100"
+												onclick={() => removeRow(rowIdx)}
+												title="Delete row"><IDismiss class="size-3.5" /></button
+											>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
 					</div>
 				{/if}
+
+				<p class="mt-2 text-xs text-base-content/40">
+					Click <ISettings class="inline size-3" /> on any column header to configure its type and color.
+				</p>
 			</div>
 		</div>
 	</div>
