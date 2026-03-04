@@ -29,8 +29,6 @@
 		rows: string[][];
 	};
 
-	// These are the authoritative $state objects.
-	// NEVER bind through a $derived — Svelte 5 won't write back through derived proxies.
 	let barTable = $state<TableState>({
 		headers: ['Category', 'Destroyed', 'Damaged'],
 		colTypes: ['text', 'number', 'number'],
@@ -86,6 +84,7 @@
 	let modalOpen = $state(false);
 	let modalColIdx = $state(0);
 
+	// FIX: derive directly from the correct table's state so modal always reflects current values
 	const modalColType = $derived(
 		chartMode === 'bar'
 			? (barTable.colTypes[modalColIdx] ?? 'text')
@@ -98,7 +97,11 @@
 			: (lineColors[lineTable.headers[modalColIdx]] ?? '#888888')
 	);
 
-	function openColModal(colIdx: number) {
+	// FIX: openColModal uses stopPropagation to prevent any parent click handlers
+	// from interfering, and explicitly sets both state vars before opening
+	function openColModal(e: MouseEvent, colIdx: number) {
+		e.stopPropagation();
+		e.preventDefault();
 		modalColIdx = colIdx;
 		modalOpen = true;
 	}
@@ -116,7 +119,7 @@
 		else lineColors[key] = color;
 	}
 
-	// ── TABLE MUTATIONS — always target barTable/lineTable directly ───────────
+	// ── TABLE MUTATIONS ───────────────────────────────────────────────────────
 
 	function tbl(): TableState {
 		return chartMode === 'bar' ? barTable : lineTable;
@@ -464,7 +467,11 @@
 			<div class="card-body gap-4 p-5">
 				<div class="flex items-center justify-between">
 					<h3 class="text-base font-semibold">Column Settings</h3>
-					<button class="btn btn-circle btn-ghost btn-xs" onclick={() => (modalOpen = false)}>
+					<button
+						type="button"
+						class="btn btn-circle btn-ghost btn-xs"
+						onclick={() => (modalOpen = false)}
+					>
 						<IDismiss class="size-4" />
 					</button>
 				</div>
@@ -493,6 +500,7 @@
 					<div class="join w-full">
 						{#each COL_TYPE_CYCLE as t}
 							<button
+								type="button"
 								class="btn join-item flex-1 btn-sm {modalColType === t
 									? 'btn-primary'
 									: 'btn-outline'}"
@@ -523,6 +531,7 @@
 				<!-- Remove column -->
 				{#if (chartMode === 'bar' ? barTable.headers : lineTable.headers).length > 2 && modalColIdx > 0}
 					<button
+						type="button"
 						class="btn w-full btn-outline btn-sm btn-error"
 						onclick={() => {
 							removeColumn(modalColIdx);
@@ -533,7 +542,9 @@
 					</button>
 				{/if}
 
-				<button class="btn btn-sm btn-primary" onclick={() => (modalOpen = false)}>Done</button>
+				<button type="button" class="btn btn-sm btn-primary" onclick={() => (modalOpen = false)}
+					>Done</button
+				>
 			</div>
 		</div>
 	</div>
@@ -547,10 +558,12 @@
 
 			<div class="join w-full">
 				<button
+					type="button"
 					class="btn join-item flex-1 btn-sm {chartMode === 'bar' ? 'btn-primary' : 'btn-outline'}"
 					onclick={() => (chartMode = 'bar')}><IBarChart class="mr-1 inline size-4" /> Bar</button
 				>
 				<button
+					type="button"
 					class="btn join-item flex-1 btn-sm {chartMode === 'line' ? 'btn-primary' : 'btn-outline'}"
 					onclick={() => (chartMode = 'line')}
 					><ILineChart class="mr-1 inline size-4" /> Line</button
@@ -610,16 +623,29 @@
 				<p class="mb-1 text-xs text-base-content/50">Examples</p>
 				<div class="flex flex-wrap gap-1">
 					{#if chartMode === 'bar'}
-						<button class="btn btn-outline btn-xs" onclick={loadBarExample1}>Bar 1</button>
-						<button class="btn btn-outline btn-xs" onclick={loadBarExample2}>Bar 2</button>
+						<button type="button" class="btn btn-outline btn-xs" onclick={loadBarExample1}
+							>Bar 1</button
+						>
+						<button type="button" class="btn btn-outline btn-xs" onclick={loadBarExample2}
+							>Bar 2</button
+						>
 					{:else}
-						<button class="btn btn-outline btn-xs" onclick={loadLineExample1}>Line 1</button>
-						<button class="btn btn-outline btn-xs" onclick={loadLineExample2}>Line 2</button>
+						<button type="button" class="btn btn-outline btn-xs" onclick={loadLineExample1}
+							>Line 1</button
+						>
+						<button type="button" class="btn btn-outline btn-xs" onclick={loadLineExample2}
+							>Line 2</button
+						>
 					{/if}
 				</div>
 			</div>
 
-			<button class="btn w-full btn-sm btn-primary" onclick={exportAsImage} disabled={isExporting}>
+			<button
+				type="button"
+				class="btn w-full btn-sm btn-primary"
+				onclick={exportAsImage}
+				disabled={isExporting}
+			>
 				{#if isExporting}Exporting…{:else}<ICamera class="mr-1 inline size-4" /> Export PNG{/if}
 			</button>
 		</div>
@@ -724,9 +750,10 @@
 				<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 					<h2 class="card-title text-base">Data Editor</h2>
 					<div class="flex flex-wrap gap-1">
-						<button class="btn btn-outline btn-xs" onclick={addRow}>+ Row</button>
-						<button class="btn btn-outline btn-xs" onclick={addColumn}>+ Col</button>
+						<button type="button" class="btn btn-outline btn-xs" onclick={addRow}>+ Row</button>
+						<button type="button" class="btn btn-outline btn-xs" onclick={addColumn}>+ Col</button>
 						<button
+							type="button"
 							class="btn btn-xs {csvPasteVisible ? 'btn-warning' : 'btn-outline'}"
 							onclick={() => {
 								csvPasteVisible = !csvPasteVisible;
@@ -760,6 +787,7 @@
 							<p class="text-xs text-error">{csvPasteError}</p>
 						{/if}
 						<button
+							type="button"
 							class="btn btn-sm btn-primary"
 							onclick={applyCSVPaste}
 							disabled={!csvPasteText.trim()}
@@ -770,8 +798,10 @@
 				{/if}
 
 				<!--
-					Two separate table blocks, each binding directly into barTable / lineTable ($state).
-					This is the ONLY correct pattern in Svelte 5 — binding through a $derived breaks writes.
+					FIX: Bind directly into barTable.rows[rowIdx][colIdx] via the row proxy reference.
+					Key each row by the row object reference (not index) so Svelte tracks identity
+					correctly and bindings stay live when rows are added/removed/reordered.
+					Using `(row)` as key ensures each row's DOM node is tied to the actual array element.
 				-->
 				{#if chartMode === 'bar'}
 					<div class="overflow-x-auto rounded-lg border border-base-300">
@@ -787,8 +817,9 @@
 													class="input input-xs min-w-12 flex-1 input-ghost px-1 text-xs font-semibold focus:bg-base-100"
 												/>
 												<button
+													type="button"
 													class="btn shrink-0 px-0.5 text-base-content/30 btn-ghost btn-xs hover:text-primary"
-													onclick={() => openColModal(colIdx)}
+													onclick={(e) => openColModal(e, colIdx)}
 													title="Column settings"><ISettings class="size-3.5" /></button
 												>
 											</div>
@@ -798,9 +829,9 @@
 								</tr>
 							</thead>
 							<tbody>
-								{#each barTable.rows as _row, rowIdx (rowIdx)}
+								{#each barTable.rows as row, rowIdx (row)}
 									<tr class="group hover:bg-base-200/40">
-										{#each barTable.rows[rowIdx] as _cell, colIdx (colIdx)}
+										{#each row as _cell, colIdx (colIdx)}
 											{@const colType = barTable.colTypes[colIdx] ?? 'text'}
 											<td class="p-0">
 												<input
@@ -809,7 +840,7 @@
 														: colType === 'date'
 															? 'date'
 															: 'text'}
-													bind:value={barTable.rows[rowIdx][colIdx]}
+													bind:value={row[colIdx]}
 													class="input input-xs w-full min-w-12 input-ghost px-2 text-xs focus:bg-base-100
 														{colType === 'number' ? 'text-right tabular-nums' : ''}"
 												/>
@@ -817,6 +848,7 @@
 										{/each}
 										<td class="w-6 p-0">
 											<button
+												type="button"
 												class="btn px-1 text-error opacity-0 btn-ghost btn-xs group-hover:opacity-100"
 												onclick={() => removeRow(rowIdx)}
 												title="Delete row"><IDismiss class="size-3.5" /></button
@@ -841,8 +873,9 @@
 													class="input input-xs min-w-12 flex-1 input-ghost px-1 text-xs font-semibold focus:bg-base-100"
 												/>
 												<button
+													type="button"
 													class="btn shrink-0 px-0.5 text-base-content/30 btn-ghost btn-xs hover:text-primary"
-													onclick={() => openColModal(colIdx)}
+													onclick={(e) => openColModal(e, colIdx)}
 													title="Column settings"><ISettings class="size-3.5" /></button
 												>
 											</div>
@@ -852,9 +885,9 @@
 								</tr>
 							</thead>
 							<tbody>
-								{#each lineTable.rows as _row, rowIdx (rowIdx)}
+								{#each lineTable.rows as row, rowIdx (row)}
 									<tr class="group hover:bg-base-200/40">
-										{#each lineTable.rows[rowIdx] as _cell, colIdx (colIdx)}
+										{#each row as _cell, colIdx (colIdx)}
 											{@const colType = lineTable.colTypes[colIdx] ?? 'text'}
 											<td class="p-0">
 												<input
@@ -863,7 +896,7 @@
 														: colType === 'date'
 															? 'date'
 															: 'text'}
-													bind:value={lineTable.rows[rowIdx][colIdx]}
+													bind:value={row[colIdx]}
 													class="input input-xs w-full min-w-12 input-ghost px-2 text-xs focus:bg-base-100
 														{colType === 'number' ? 'text-right tabular-nums' : ''}"
 												/>
@@ -871,6 +904,7 @@
 										{/each}
 										<td class="w-6 p-0">
 											<button
+												type="button"
 												class="btn px-1 text-error opacity-0 btn-ghost btn-xs group-hover:opacity-100"
 												onclick={() => removeRow(rowIdx)}
 												title="Delete row"><IDismiss class="size-3.5" /></button
