@@ -113,73 +113,69 @@
 	}
 
 	// ── CURRENT TABLE ─────────────────────────────────────────────────────────
+	// Use a getter/setter pair so all helpers always operate on the live $state object.
 
-	const currentTable = $derived(chartMode === 'bar' ? barTable : lineTable);
+	function getTable(): TableState {
+		return chartMode === 'bar' ? barTable : lineTable;
+	}
 
-	function setCurrentTable(t: TableState) {
+	function setTable(t: TableState) {
 		if (chartMode === 'bar') barTable = t;
 		else lineTable = t;
 	}
 
+	// Convenience read-only derived for the template
+	const currentTable = $derived(chartMode === 'bar' ? barTable : lineTable);
+
 	// ── TABLE EDITING ─────────────────────────────────────────────────────────
+	// Directly mutate the live $state proxy — Svelte 5 deep-tracks these.
 
 	function updateCell(rowIdx: number, colIdx: number, val: string) {
-		const src = chartMode === 'bar' ? barTable : lineTable;
-		const t: TableState = { ...src, rows: src.rows.map((r) => [...r]) };
-		t.rows[rowIdx][colIdx] = val;
-		setCurrentTable(t);
+		const tbl = getTable();
+		tbl.rows[rowIdx][colIdx] = val;
 	}
 
 	function updateHeader(colIdx: number, val: string) {
-		const t: TableState = { ...currentTable, headers: [...currentTable.headers] };
-		t.headers[colIdx] = val;
-		setCurrentTable(t);
+		getTable().headers[colIdx] = val;
 	}
 
 	function cycleColType(colIdx: number) {
-		const t: TableState = { ...currentTable, colTypes: [...currentTable.colTypes] };
-		const cur = t.colTypes[colIdx] ?? 'text';
-		const next = COL_TYPE_CYCLE[(COL_TYPE_CYCLE.indexOf(cur) + 1) % COL_TYPE_CYCLE.length];
-		t.colTypes[colIdx] = next;
-		setCurrentTable(t);
+		const tbl = getTable();
+		const cur = tbl.colTypes[colIdx] ?? 'text';
+		tbl.colTypes[colIdx] =
+			COL_TYPE_CYCLE[(COL_TYPE_CYCLE.indexOf(cur) + 1) % COL_TYPE_CYCLE.length];
 	}
 
 	function addRow() {
-		const t: TableState = {
-			...currentTable,
-			rows: [
-				...currentTable.rows,
-				currentTable.headers.map((_, i) => {
-					const type = currentTable.colTypes[i] ?? 'text';
-					if (i === 0 && type === 'text') return 'New';
-					if (type === 'date') return new Date().toISOString().slice(0, 10);
-					return '0';
-				})
-			]
-		};
-		setCurrentTable(t);
+		const tbl = getTable();
+		tbl.rows.push(
+			tbl.headers.map((_, i) => {
+				const type = tbl.colTypes[i] ?? 'text';
+				if (i === 0 && type === 'text') return 'New';
+				if (type === 'date') return new Date().toISOString().slice(0, 10);
+				return '0';
+			})
+		);
 	}
 
 	function removeRow(idx: number) {
-		setCurrentTable({ ...currentTable, rows: currentTable.rows.filter((_, i) => i !== idx) });
+		getTable().rows.splice(idx, 1);
 	}
 
 	function addColumn() {
-		const name = `Col${currentTable.headers.length}`;
-		setCurrentTable({
-			headers: [...currentTable.headers, name],
-			colTypes: [...currentTable.colTypes, 'number'],
-			rows: currentTable.rows.map((r) => [...r, '0'])
-		});
+		const tbl = getTable();
+		const name = `Col${tbl.headers.length}`;
+		tbl.headers.push(name);
+		tbl.colTypes.push('number');
+		tbl.rows.forEach((r) => r.push('0'));
 	}
 
 	function removeColumn(colIdx: number) {
-		if (currentTable.headers.length <= 2) return;
-		setCurrentTable({
-			headers: currentTable.headers.filter((_, i) => i !== colIdx),
-			colTypes: currentTable.colTypes.filter((_, i) => i !== colIdx),
-			rows: currentTable.rows.map((r) => r.filter((_, i) => i !== colIdx))
-		});
+		const tbl = getTable();
+		if (tbl.headers.length <= 2) return;
+		tbl.headers.splice(colIdx, 1);
+		tbl.colTypes.splice(colIdx, 1);
+		tbl.rows.forEach((r) => r.splice(colIdx, 1));
 	}
 
 	function applyCSVPaste() {
@@ -189,7 +185,7 @@
 			csvPasteError = 'Could not parse CSV. Ensure at least 2 columns and a header row.';
 			return;
 		}
-		setCurrentTable(parsed);
+		setTable(parsed);
 		csvPasteText = '';
 		csvPasteVisible = false;
 	}
@@ -715,41 +711,39 @@
 					</div>
 				{/if}
 
-				<!-- Editable table -->
-				<div class="overflow-x-auto rounded-lg border border-base-300">
-					<table class="table w-full table-xs">
-						<thead>
-							<tr class="bg-base-200">
-								{#each currentTable.headers as header, colIdx (colIdx)}
-									{@const colType = currentTable.colTypes[colIdx] ?? 'text'}
-									<th class="p-0">
-										<div class="group flex flex-col">
-											<!-- CHANGED: type badge + delete only shown when showColTypes is true -->
-											{#if showColTypes}
-												<div class="flex items-center justify-between gap-1 px-1 pt-1">
-													<button
-														class="badge shrink-0 cursor-pointer font-mono badge-xs transition-colors select-none hover:badge-primary
-															{colType === 'number' ? 'badge-accent' : colType === 'date' ? 'badge-info' : 'badge-ghost'}"
-														onclick={() => cycleColType(colIdx)}
-														title="Click to cycle type: text → number → date"
-													>
-														{#if colType === 'date'}
-															<ICalendar class="size-3" />
-														{:else}
-															{COL_TYPE_ICONS[colType]}
-														{/if}
-													</button>
-													{#if currentTable.headers.length > 2 && colIdx > 0}
+				<!-- Editable table — #key forces full remount on chart mode switch so inputs show correct values -->
+				{#key chartMode}
+					<div class="overflow-x-auto rounded-lg border border-base-300">
+						<table class="table w-full table-xs">
+							<thead>
+								<tr class="bg-base-200">
+									{#each currentTable.headers as _h, colIdx (colIdx)}
+										{@const colType = currentTable.colTypes[colIdx] ?? 'text'}
+										<th class="p-0">
+											<div class="group flex flex-col">
+												{#if showColTypes}
+													<div class="flex items-center justify-between gap-1 px-1 pt-1">
 														<button
-															class="px-0.5 text-xs leading-none text-error opacity-0 transition-opacity group-hover:opacity-100"
-															onclick={() => removeColumn(colIdx)}
-															title="Remove column"><IDismiss class="size-3" /></button
+															class="badge shrink-0 cursor-pointer font-mono badge-xs transition-colors select-none hover:badge-primary
+																{colType === 'number' ? 'badge-accent' : colType === 'date' ? 'badge-info' : 'badge-ghost'}"
+															onclick={() => cycleColType(colIdx)}
+															title="Click to cycle type: text → number → date"
 														>
-													{/if}
-												</div>
-											{:else}
-												<!-- When col types hidden, still show delete button on hover for cols >1 -->
-												{#if currentTable.headers.length > 2 && colIdx > 0}
+															{#if colType === 'date'}
+																<ICalendar class="size-3" />
+															{:else}
+																{COL_TYPE_ICONS[colType]}
+															{/if}
+														</button>
+														{#if currentTable.headers.length > 2 && colIdx > 0}
+															<button
+																class="px-0.5 text-xs leading-none text-error opacity-0 transition-opacity group-hover:opacity-100"
+																onclick={() => removeColumn(colIdx)}
+																title="Remove column"><IDismiss class="size-3" /></button
+															>
+														{/if}
+													</div>
+												{:else if currentTable.headers.length > 2 && colIdx > 0}
 													<div class="flex justify-end px-1 pt-1">
 														<button
 															class="px-0.5 text-xs leading-none text-error opacity-0 transition-opacity group-hover:opacity-100"
@@ -758,52 +752,49 @@
 														>
 													</div>
 												{/if}
-											{/if}
-											<!-- header name input -->
-											<input
-												type="text"
-												value={header}
-												oninput={(e) => updateHeader(colIdx, (e.target as HTMLInputElement).value)}
-												class="input input-xs w-full min-w-16 input-ghost px-2 text-xs font-semibold focus:bg-base-100"
-											/>
-										</div>
-									</th>
-								{/each}
-								<th class="w-6 p-0"></th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each currentTable.rows as row, rowIdx (rowIdx)}
-								<tr class="group hover:bg-base-200/40">
-									{#each row as cell, colIdx (colIdx)}
-										{@const colType = currentTable.colTypes[colIdx] ?? 'text'}
-										<td class="p-0">
-											<input
-												type={colType === 'number'
-													? 'number'
-													: colType === 'date'
-														? 'date'
-														: 'text'}
-												value={cell}
-												oninput={(e) =>
-													updateCell(rowIdx, colIdx, (e.target as HTMLInputElement).value)}
-												class="input input-xs w-full min-w-12 input-ghost px-2 text-xs focus:bg-base-100
-													{colType === 'number' ? 'text-right tabular-nums' : ''}"
-											/>
-										</td>
+												<!-- bind:value directly into $state proxy for instant reactivity -->
+												<input
+													type="text"
+													bind:value={currentTable.headers[colIdx]}
+													class="input input-xs w-full min-w-16 input-ghost px-2 text-xs font-semibold focus:bg-base-100"
+												/>
+											</div>
+										</th>
 									{/each}
-									<td class="w-6 p-0">
-										<button
-											class="btn px-1 text-error opacity-0 btn-ghost btn-xs group-hover:opacity-100"
-											onclick={() => removeRow(rowIdx)}
-											title="Delete row"><IDismiss class="size-3.5" /></button
-										>
-									</td>
+									<th class="w-6 p-0"></th>
 								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+							</thead>
+							<tbody>
+								{#each currentTable.rows as _row, rowIdx (rowIdx)}
+									<tr class="group hover:bg-base-200/40">
+										{#each currentTable.rows[rowIdx] as _cell, colIdx (colIdx)}
+											{@const colType = currentTable.colTypes[colIdx] ?? 'text'}
+											<td class="p-0">
+												<input
+													type={colType === 'number'
+														? 'number'
+														: colType === 'date'
+															? 'date'
+															: 'text'}
+													bind:value={currentTable.rows[rowIdx][colIdx]}
+													class="input input-xs w-full min-w-12 input-ghost px-2 text-xs focus:bg-base-100
+														{colType === 'number' ? 'text-right tabular-nums' : ''}"
+												/>
+											</td>
+										{/each}
+										<td class="w-6 p-0">
+											<button
+												class="btn px-1 text-error opacity-0 btn-ghost btn-xs group-hover:opacity-100"
+												onclick={() => removeRow(rowIdx)}
+												title="Delete row"><IDismiss class="size-3.5" /></button
+											>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/key}
 
 				<!-- Legend — only shown when col types are visible -->
 				{#if showColTypes}
