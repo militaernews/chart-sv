@@ -462,16 +462,30 @@
 			<div class="form-control">
 				<label class="label py-1"><span class="label-text text-xs">Series Colors</span></label>
 				<div class="space-y-1">
-					{#each chartMode === 'bar' ? legendItems : lineSeriesKeys as key (key)}
-						<div class="flex items-center gap-2">
-							<input
-								type="color"
-								bind:value={chartMode === 'bar' ? legendColors[key] : lineColors[key]}
-								class="h-7 w-10 cursor-pointer rounded border"
-							/>
-							<span class="truncate text-xs">{key}</span>
-						</div>
-					{/each}
+					<!-- FIX 1: Split ternary bind into two separate #if blocks -->
+					{#if chartMode === 'bar'}
+						{#each legendItems as key (key)}
+							<div class="flex items-center gap-2">
+								<input
+									type="color"
+									bind:value={legendColors[key]}
+									class="h-7 w-10 cursor-pointer rounded border"
+								/>
+								<span class="truncate text-xs">{key}</span>
+							</div>
+						{/each}
+					{:else}
+						{#each lineSeriesKeys as key (key)}
+							<div class="flex items-center gap-2">
+								<input
+									type="color"
+									bind:value={lineColors[key]}
+									class="h-7 w-10 cursor-pointer rounded border"
+								/>
+								<span class="truncate text-xs">{key}</span>
+							</div>
+						{/each}
+					{/if}
 				</div>
 			</div>
 
@@ -519,7 +533,7 @@
 							y={{ domain: [...barCategories].reverse(), padding: 0.2 }}
 							style="background: transparent; color: #9ca3af; font-size: 12px;"
 						>
-							<BarX data={barChartData} x="value" y="category" fill={colorFill} stack inset={1} />
+							<BarX data={barChartData} x="value" y="category" fill={colorFill} inset={1} />
 							<AxisX tickFormat={(d) => String(d)} style="color: #00ff00; font-size: 11px;" />
 							<AxisY style="color: #e5e7eb; font-size: 11px;" />
 							<RuleX x={0} />
@@ -540,7 +554,7 @@
 							marginRight={20}
 							marginTop={10}
 							x={{ domain: lineXDomain, grid: true, padding: 0.05 }}
-							y={{ domain: [0, effectiveLineMax], grid: true, tickCount: 6 }}
+							y={{ domain: [0, effectiveLineMax], grid: true, ticks: 6 }}
 							style="background: transparent; color: #9ca3af; font-size: 12px;"
 						>
 							{#each lineSeriesData as series (series.key)}
