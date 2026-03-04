@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import html2canvas from 'html2canvas-pro';
 	import Branding from '$lib/components/Branding.svelte';
-	import { Plot, BarX, RuleX, AxisX, AxisY, Line, Dot } from 'svelteplot';
+	import { Plot, BarX, RuleX, AxisX, AxisY, Line, Dot, Text } from 'svelteplot';
 	import IBarChart from '~icons/fluent/chart-multiple-24-regular';
 	import ILineChart from '~icons/fluent/arrow-trending-24-regular';
 	import ICamera from '~icons/fluent/camera-16-regular';
@@ -23,6 +23,7 @@
 	let title = $state('Russian Losses in Kharkiv');
 	let subtitle = $state('as of June 3, 2024');
 	let maxScaleValue = $state(0);
+	let showColTypes = $state(false); // NEW: toggle column type badges
 
 	type TableState = {
 		headers: string[];
@@ -224,6 +225,46 @@
 	);
 	const effectiveBarMax = $derived(maxScaleValue > 0 ? maxScaleValue : barMaxValue);
 	const colorFill = $derived((d: { type: string }) => legendColors[d.type] ?? '#888');
+
+	// NEW: per-category row totals for the sum label
+	const barRowTotals = $derived.by(() => {
+		const map: Record<string, number> = {};
+		for (const item of parsedBarData) {
+			map[item.Category] = legendItems.reduce((s, k) => s + (item[k] || 0), 0);
+		}
+		return map;
+	});
+
+	// data for individual segment labels (midpoint x for each segment)
+	const barSegmentLabels = $derived.by(() => {
+		const labels: { category: string; x: number; label: string; color: string }[] = [];
+		for (const item of parsedBarData) {
+			let offset = 0;
+			for (const key of legendItems) {
+				const v = item[key] || 0;
+				if (v > 0) {
+					labels.push({
+						category: item.Category,
+						x: offset + v / 2,
+						label: String(v),
+						color: legendColors[key] ?? '#888'
+					});
+					offset += v;
+				}
+			}
+		}
+		return labels;
+	});
+
+	// data for total labels (end of full bar)
+	const barTotalLabels = $derived.by(() =>
+		parsedBarData
+			.map((item) => {
+				const total = legendItems.reduce((s, k) => s + (item[k] || 0), 0);
+				return { category: item.Category, x: total, label: String(total) };
+			})
+			.filter((d) => d.label !== '0')
+	);
 
 	$effect(() => {
 		const defaults = ['#ff0000', '#ffaa00', '#ffdd00', '#666666'];
@@ -469,7 +510,6 @@
 			<div class="form-control">
 				<label class="label py-1"><span class="label-text text-xs">Series Colors</span></label>
 				<div class="space-y-1">
-					<!-- FIX 1: Split ternary bind into two separate #if blocks -->
 					{#if chartMode === 'bar'}
 						{#each legendItems as key (key)}
 							<div class="flex items-center gap-2">
@@ -545,7 +585,33 @@
 							class="color-gray-400 font-size-12 bg-transparent"
 						>
 							<BarX data={barChartData} x="value" y="category" fill={colorFill} inset={1} />
-							<AxisX tickFormat={(d) => String(d)} style="color: #00ff00; font-size: 11px;" />
+							<!-- Segment value labels (white, centered in each segment) -->
+							<Text
+								data={barSegmentLabels}
+								x="x"
+								y="category"
+								text="label"
+								fill="rgba(255,255,255,0.9)"
+								fontSize={10}
+								fontWeight="600"
+								textAnchor="middle"
+								dy={1}
+							/>
+							<!-- Total sum labels (grey, just past end of bar) -->
+							<Text
+								data={barTotalLabels}
+								x="x"
+								y="category"
+								text="label"
+								fill="#9ca3af"
+								fontSize={11}
+								fontWeight="700"
+								textAnchor="start"
+								dx={4}
+								dy={1}
+							/>
+							<!-- CHANGED: x-axis tick color from #00ff00 to #9ca3af (grey) -->
+							<AxisX tickFormat={(d) => String(d)} style="color: #9ca3af; font-size: 11px;" />
 							<AxisY style="color: #e5e7eb; font-size: 11px;" />
 							<RuleX x={0} />
 						</Plot>
@@ -572,7 +638,8 @@
 								<Line data={series.points} x="x" y="y" stroke={series.color} strokeWidth={2} />
 								<Dot data={series.points} x="x" y="y" fill={series.color} r={3} />
 							{/each}
-							<AxisX tickFormat={(d) => String(d)} style="color: #00ff00; font-size: 11px;" />
+							<!-- CHANGED: x-axis tick color from #00ff00 to #9ca3af (grey) -->
+							<AxisX tickFormat={(d) => String(d)} style="color: #9ca3af; font-size: 11px;" />
 							<AxisY ticks={6} style="color: #e5e7eb; font-size: 11px;" />
 						</Plot>
 						<div class="mt-2 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
@@ -597,6 +664,14 @@
 					<div class="flex flex-wrap gap-1">
 						<button class="btn btn-outline btn-xs" onclick={addRow}>+ Row</button>
 						<button class="btn btn-outline btn-xs" onclick={addColumn}>+ Col</button>
+						<!-- NEW: toggle for column type badges -->
+						<button
+							class="btn btn-xs {showColTypes ? 'btn-secondary' : 'btn-outline'}"
+							onclick={() => (showColTypes = !showColTypes)}
+							title="Toggle column type badges"
+						>
+							{showColTypes ? 'Hide Types' : 'Col Types'}
+						</button>
 						<button
 							class="btn btn-xs {csvPasteVisible ? 'btn-warning' : 'btn-outline'}"
 							onclick={() => {
@@ -649,28 +724,41 @@
 									{@const colType = currentTable.colTypes[colIdx] ?? 'text'}
 									<th class="p-0">
 										<div class="group flex flex-col">
-											<!-- type badge + delete -->
-											<div class="flex items-center justify-between gap-1 px-1 pt-1">
-												<button
-													class="badge shrink-0 cursor-pointer font-mono badge-xs transition-colors select-none hover:badge-primary
-														{colType === 'number' ? 'badge-accent' : colType === 'date' ? 'badge-info' : 'badge-ghost'}"
-													onclick={() => cycleColType(colIdx)}
-													title="Click to cycle type: text → number → date"
-												>
-													{#if colType === 'date'}
-														<ICalendar class="size-3" />
-													{:else}
-														{COL_TYPE_ICONS[colType]}
-													{/if}
-												</button>
-												{#if currentTable.headers.length > 2 && colIdx > 0}
+											<!-- CHANGED: type badge + delete only shown when showColTypes is true -->
+											{#if showColTypes}
+												<div class="flex items-center justify-between gap-1 px-1 pt-1">
 													<button
-														class="px-0.5 text-xs leading-none text-error opacity-0 transition-opacity group-hover:opacity-100"
-														onclick={() => removeColumn(colIdx)}
-														title="Remove column"><IDismiss class="size-3" /></button
+														class="badge shrink-0 cursor-pointer font-mono badge-xs transition-colors select-none hover:badge-primary
+															{colType === 'number' ? 'badge-accent' : colType === 'date' ? 'badge-info' : 'badge-ghost'}"
+														onclick={() => cycleColType(colIdx)}
+														title="Click to cycle type: text → number → date"
 													>
+														{#if colType === 'date'}
+															<ICalendar class="size-3" />
+														{:else}
+															{COL_TYPE_ICONS[colType]}
+														{/if}
+													</button>
+													{#if currentTable.headers.length > 2 && colIdx > 0}
+														<button
+															class="px-0.5 text-xs leading-none text-error opacity-0 transition-opacity group-hover:opacity-100"
+															onclick={() => removeColumn(colIdx)}
+															title="Remove column"><IDismiss class="size-3" /></button
+														>
+													{/if}
+												</div>
+											{:else}
+												<!-- When col types hidden, still show delete button on hover for cols >1 -->
+												{#if currentTable.headers.length > 2 && colIdx > 0}
+													<div class="flex justify-end px-1 pt-1">
+														<button
+															class="px-0.5 text-xs leading-none text-error opacity-0 transition-opacity group-hover:opacity-100"
+															onclick={() => removeColumn(colIdx)}
+															title="Remove column"><IDismiss class="size-3" /></button
+														>
+													</div>
 												{/if}
-											</div>
+											{/if}
 											<!-- header name input -->
 											<input
 												type="text"
@@ -717,19 +805,21 @@
 					</table>
 				</div>
 
-				<!-- Legend -->
-				<div class="mt-2 flex flex-wrap gap-3 text-xs text-base-content/50">
-					<span class="flex items-center gap-1">
-						<span class="badge badge-ghost font-mono badge-xs">T</span> text
-					</span>
-					<span class="flex items-center gap-1">
-						<span class="badge font-mono badge-xs badge-accent">#</span> number
-					</span>
-					<span class="flex items-center gap-1">
-						<span class="badge font-mono badge-xs badge-info"><ICalendar class="size-3" /></span> date
-					</span>
-					<span class="ml-auto">Click a badge to cycle the column type.</span>
-				</div>
+				<!-- Legend — only shown when col types are visible -->
+				{#if showColTypes}
+					<div class="mt-2 flex flex-wrap gap-3 text-xs text-base-content/50">
+						<span class="flex items-center gap-1">
+							<span class="badge badge-ghost font-mono badge-xs">T</span> text
+						</span>
+						<span class="flex items-center gap-1">
+							<span class="badge font-mono badge-xs badge-accent">#</span> number
+						</span>
+						<span class="flex items-center gap-1">
+							<span class="badge font-mono badge-xs badge-info"><ICalendar class="size-3" /></span> date
+						</span>
+						<span class="ml-auto">Click a badge to cycle the column type.</span>
+					</div>
+				{/if}
 			</div>
 		</div>
 	</div>
