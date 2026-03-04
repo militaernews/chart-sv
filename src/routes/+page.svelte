@@ -4,11 +4,17 @@
 	import html2canvas from 'html2canvas-pro';
 	import Branding from '$lib/components/Branding.svelte';
 	import { Plot, BarX, RuleX, AxisX, AxisY, Line, Dot } from 'svelteplot';
+	import IBarChart from '~icons/fluent/chart-multiple-24-regular';
+	import ILineChart from '~icons/fluent/arrow-trending-24-regular';
+	import ICamera from '~icons/fluent/camera-16-regular';
+	import IClipboard from '~icons/fluent/clipboard-paste-20-regular';
+	import ICalendar from '~icons/fluent/calendar-ltr-20-regular';
+	import IDismiss from '~icons/fluent/dismiss-16-regular';
 
 	type ChartMode = 'bar' | 'line';
 	type ColType = 'text' | 'number' | 'date';
 
-	const COL_TYPE_ICONS: Record<ColType, string> = { text: 'T', number: '#', date: '📅' };
+	const COL_TYPE_ICONS: Record<ColType, string> = { text: 'T', number: '#', date: 'D' };
 	const COL_TYPE_CYCLE: ColType[] = ['text', 'number', 'date'];
 
 	// ── STATE────
@@ -431,11 +437,12 @@
 			<div class="join w-full">
 				<button
 					class="btn join-item flex-1 btn-sm {chartMode === 'bar' ? 'btn-primary' : 'btn-outline'}"
-					onclick={() => (chartMode = 'bar')}>📊 Bar</button
+					onclick={() => (chartMode = 'bar')}><IBarChart class="mr-1 inline size-4" /> Bar</button
 				>
 				<button
 					class="btn join-item flex-1 btn-sm {chartMode === 'line' ? 'btn-primary' : 'btn-outline'}"
-					onclick={() => (chartMode = 'line')}>📈 Line</button
+					onclick={() => (chartMode = 'line')}
+					><ILineChart class="mr-1 inline size-4" /> Line</button
 				>
 			</div>
 
@@ -503,7 +510,11 @@
 			</div>
 
 			<button class="btn w-full btn-sm btn-primary" onclick={exportAsImage} disabled={isExporting}>
-				{isExporting ? 'Exporting…' : '📸 Export PNG'}
+				{#if isExporting}
+					Exporting…
+				{:else}
+					<ICamera class="mr-1 inline size-4" /> Export PNG
+				{/if}
 			</button>
 		</div>
 	</div>
@@ -529,9 +540,9 @@
 							marginLeft={140}
 							marginBottom={30}
 							marginRight={40}
-							x={{ domain: [0, effectiveBarMax], grid: true, ticks: 5 }}
+							x={{ domain: [0, effectiveBarMax], grid: true }}
 							y={{ domain: [...barCategories].reverse(), padding: 0.2 }}
-							style="background: transparent; color: #9ca3af; font-size: 12px;"
+							class="color-gray-400 font-size-12 bg-transparent"
 						>
 							<BarX data={barChartData} x="value" y="category" fill={colorFill} inset={1} />
 							<AxisX tickFormat={(d) => String(d)} style="color: #00ff00; font-size: 11px;" />
@@ -554,15 +565,15 @@
 							marginRight={20}
 							marginTop={10}
 							x={{ domain: lineXDomain, grid: true, padding: 0.05 }}
-							y={{ domain: [0, effectiveLineMax], grid: true, ticks: 6 }}
-							style="background: transparent; color: #9ca3af; font-size: 12px;"
+							y={{ domain: [0, effectiveLineMax], grid: true }}
+							class="color-gray-400 font-size-12 bg-transparent"
 						>
 							{#each lineSeriesData as series (series.key)}
 								<Line data={series.points} x="x" y="y" stroke={series.color} strokeWidth={2} />
 								<Dot data={series.points} x="x" y="y" fill={series.color} r={3} />
 							{/each}
 							<AxisX tickFormat={(d) => String(d)} style="color: #00ff00; font-size: 11px;" />
-							<AxisY style="color: #e5e7eb; font-size: 11px;" />
+							<AxisY ticks={6} style="color: #e5e7eb; font-size: 11px;" />
 						</Plot>
 						<div class="mt-2 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
 							{#each lineSeriesData as s (s.key)}
@@ -593,7 +604,11 @@
 								csvPasteError = '';
 							}}
 						>
-							{csvPasteVisible ? '✕ Cancel' : '📋 Paste CSV'}
+							{#if csvPasteVisible}
+								<IDismiss class="mr-1 inline size-3.5" /> Cancel
+							{:else}
+								<IClipboard class="mr-1 inline size-4" /> Paste CSV
+							{/if}
 						</button>
 					</div>
 				</div>
@@ -642,13 +657,17 @@
 													onclick={() => cycleColType(colIdx)}
 													title="Click to cycle type: text → number → date"
 												>
-													{COL_TYPE_ICONS[colType]}
+													{#if colType === 'date'}
+														<ICalendar class="size-3" />
+													{:else}
+														{COL_TYPE_ICONS[colType]}
+													{/if}
 												</button>
 												{#if currentTable.headers.length > 2 && colIdx > 0}
 													<button
 														class="px-0.5 text-xs leading-none text-error opacity-0 transition-opacity group-hover:opacity-100"
 														onclick={() => removeColumn(colIdx)}
-														title="Remove column">✕</button
+														title="Remove column"><IDismiss class="size-3" /></button
 													>
 												{/if}
 											</div>
@@ -689,7 +708,7 @@
 										<button
 											class="btn px-1 text-error opacity-0 btn-ghost btn-xs group-hover:opacity-100"
 											onclick={() => removeRow(rowIdx)}
-											title="Delete row">✕</button
+											title="Delete row"><IDismiss class="size-3.5" /></button
 										>
 									</td>
 								</tr>
@@ -707,7 +726,7 @@
 						<span class="badge font-mono badge-xs badge-accent">#</span> number
 					</span>
 					<span class="flex items-center gap-1">
-						<span class="badge font-mono badge-xs badge-info">📅</span> date
+						<span class="badge font-mono badge-xs badge-info"><ICalendar class="size-3" /></span> date
 					</span>
 					<span class="ml-auto">Click a badge to cycle the column type.</span>
 				</div>
