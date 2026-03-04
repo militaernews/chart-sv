@@ -6,18 +6,27 @@
 	import { Plot, BarX, RuleX, AxisX, AxisY, Line, Dot } from 'svelteplot';
 
 	type ChartMode = 'bar' | 'line';
+	type ColType = 'text' | 'number' | 'date';
 
-	// ── STATE
+	const COL_TYPE_ICONS: Record<ColType, string> = { text: 'T', number: '#', date: '📅' };
+	const COL_TYPE_CYCLE: ColType[] = ['text', 'number', 'date'];
+
+	// ── STATE────
 
 	let chartMode = $state<ChartMode>('bar');
 	let title = $state('Russian Losses in Kharkiv');
 	let subtitle = $state('as of June 3, 2024');
 	let maxScaleValue = $state(0);
 
-	type TableState = { headers: string[]; rows: string[][] };
+	type TableState = {
+		headers: string[];
+		colTypes: ColType[]; // one per column
+		rows: string[][];
+	};
 
 	let barTable = $state<TableState>({
 		headers: ['Category', 'Destroyed', 'Damaged'],
+		colTypes: ['text', 'number', 'number'],
 		rows: [
 			['Panzer', '9', '0'],
 			['Schützenpanzer', '13', '0'],
@@ -37,6 +46,7 @@
 
 	let lineTable = $state<TableState>({
 		headers: ['Date', 'Tanks', 'AFVs', 'Artillery'],
+		colTypes: ['date', 'number', 'number', 'number'],
 		rows: [
 			['2024-05-10', '2', '5', '1'],
 			['2024-05-17', '5', '12', '3'],
@@ -64,7 +74,23 @@
 	let csvPasteText = $state('');
 	let csvPasteError = $state('');
 
-	// ── HELPERS
+	// ── TYPE DETECTION ────────────────────────────────────────────────────────
+
+	const DATE_RE = /^\d{4}-\d{2}-\d{2}$|^\d{2}[./]\d{2}[./]\d{4}$/;
+
+	function detectColType(values: string[]): ColType {
+		const nonEmpty = values.filter((v) => v.trim() !== '');
+		if (nonEmpty.length === 0) return 'text';
+		if (nonEmpty.every((v) => DATE_RE.test(v.trim()))) return 'date';
+		if (nonEmpty.every((v) => !isNaN(Number(v.trim())))) return 'number';
+		return 'text';
+	}
+
+	function inferColTypes(headers: string[], rows: string[][]): ColType[] {
+		return headers.map((_, colIdx) => detectColType(rows.map((r) => r[colIdx] ?? '')));
+	}
+
+	// ── CSV HELPERS ───────────────────────────────────────────────────────────
 
 	function csvToTable(csv: string): TableState | null {
 		const lines = csv.trim().split(/\r?\n/).filter(Boolean);
@@ -76,7 +102,7 @@
 			while (cells.length < headers.length) cells.push('');
 			return cells.slice(0, headers.length).map((s) => s.trim());
 		});
-		return { headers, rows };
+		return { headers, colTypes: inferColTypes(headers, rows), rows };
 	}
 
 	// ── CURRENT TABLE ─────────────────────────────────────────────────────────
@@ -91,24 +117,38 @@
 	// ── TABLE EDITING ─────────────────────────────────────────────────────────
 
 	function updateCell(rowIdx: number, colIdx: number, val: string) {
-		const t =
-			chartMode === 'bar'
-				? { ...barTable, rows: barTable.rows.map((r) => [...r]) }
-				: { ...lineTable, rows: lineTable.rows.map((r) => [...r]) };
+		const src = chartMode === 'bar' ? barTable : lineTable;
+		const t: TableState = { ...src, rows: src.rows.map((r) => [...r]) };
 		t.rows[rowIdx][colIdx] = val;
 		setCurrentTable(t);
 	}
 
 	function updateHeader(colIdx: number, val: string) {
-		const t = { ...currentTable, headers: [...currentTable.headers] };
+		const t: TableState = { ...currentTable, headers: [...currentTable.headers] };
 		t.headers[colIdx] = val;
 		setCurrentTable(t);
 	}
 
+	function cycleColType(colIdx: number) {
+		const t: TableState = { ...currentTable, colTypes: [...currentTable.colTypes] };
+		const cur = t.colTypes[colIdx] ?? 'text';
+		const next = COL_TYPE_CYCLE[(COL_TYPE_CYCLE.indexOf(cur) + 1) % COL_TYPE_CYCLE.length];
+		t.colTypes[colIdx] = next;
+		setCurrentTable(t);
+	}
+
 	function addRow() {
-		const t = {
+		const t: TableState = {
 			...currentTable,
-			rows: [...currentTable.rows, currentTable.headers.map((_, i) => (i === 0 ? 'New' : '0'))]
+			rows: [
+				...currentTable.rows,
+				currentTable.headers.map((_, i) => {
+					const type = currentTable.colTypes[i] ?? 'text';
+					if (i === 0 && type === 'text') return 'New';
+					if (type === 'date') return new Date().toISOString().slice(0, 10);
+					return '0';
+				})
+			]
 		};
 		setCurrentTable(t);
 	}
@@ -121,6 +161,7 @@
 		const name = `Col${currentTable.headers.length}`;
 		setCurrentTable({
 			headers: [...currentTable.headers, name],
+			colTypes: [...currentTable.colTypes, 'number'],
 			rows: currentTable.rows.map((r) => [...r, '0'])
 		});
 	}
@@ -129,6 +170,7 @@
 		if (currentTable.headers.length <= 2) return;
 		setCurrentTable({
 			headers: currentTable.headers.filter((_, i) => i !== colIdx),
+			colTypes: currentTable.colTypes.filter((_, i) => i !== colIdx),
 			rows: currentTable.rows.map((r) => r.filter((_, i) => i !== colIdx))
 		});
 	}
@@ -219,10 +261,10 @@
 		lineColors = c;
 	});
 
-	// ── STORAGE ───────────────────────────────────────────────────────────────
+	// ── STORAGE──
 
 	onMount(async () => {
-		const result = await window.storage.get('chartDataV2').catch(() => null);
+		const result = await window.storage.get('chartDataV3').catch(() => null);
 		if (result?.value) {
 			try {
 				const data = JSON.parse(result.value);
@@ -243,7 +285,7 @@
 		if (!isLoaded) return;
 		window.storage
 			.set(
-				'chartDataV2',
+				'chartDataV3',
 				JSON.stringify({
 					title,
 					subtitle,
@@ -258,7 +300,7 @@
 			.catch(console.error);
 	});
 
-	// ── EXAMPLES ─────────────────────────────────────────────────────────────
+	// ── EXAMPLES
 
 	function loadBarExample1() {
 		chartMode = 'bar';
@@ -266,6 +308,7 @@
 		subtitle = 'June 3, 2024';
 		barTable = {
 			headers: ['Category', 'Destroyed', 'Damaged'],
+			colTypes: ['text', 'number', 'number'],
 			rows: [
 				['Panzer', '9', '0'],
 				['Schützenpanzer', '13', '0'],
@@ -284,6 +327,7 @@
 		subtitle = 'as of 2024-08-26';
 		barTable = {
 			headers: ['Category', 'Destroyed', 'Abandoned', 'Captured', 'Damaged'],
+			colTypes: ['text', 'number', 'number', 'number', 'number'],
 			rows: [
 				['Tanks', '22', '0', '2', '0'],
 				['AFVs', '58', '0', '0', '1'],
@@ -304,6 +348,7 @@
 		subtitle = 'May–June 2024';
 		lineTable = {
 			headers: ['Date', 'Tanks', 'AFVs', 'Artillery'],
+			colTypes: ['date', 'number', 'number', 'number'],
 			rows: [
 				['2024-05-10', '2', '5', '1'],
 				['2024-05-17', '5', '12', '3'],
@@ -320,6 +365,7 @@
 		subtitle = '2024 Eastern Front';
 		lineTable = {
 			headers: ['Week', 'Ukraine', 'Russia', 'Contested'],
+			colTypes: ['text', 'number', 'number', 'number'],
 			rows: [
 				['W1', '42000', '38000', '1200'],
 				['W2', '41800', '38100', '1250'],
@@ -332,7 +378,7 @@
 		};
 	}
 
-	// ── EXPORT ────────────────────────────────────────────────────────────────
+	// ── EXPORT───
 
 	async function exportAsImage() {
 		if (!chartElement) return;
@@ -469,7 +515,7 @@
 							marginLeft={140}
 							marginBottom={30}
 							marginRight={40}
-							x={{ domain: [0, effectiveBarMax], grid: true, tickCount: 5 }}
+							x={{ domain: [0, effectiveBarMax], grid: true, ticks: 5 }}
 							y={{ domain: [...barCategories].reverse(), padding: 0.2 }}
 							style="background: transparent; color: #9ca3af; font-size: 12px;"
 						>
@@ -501,11 +547,7 @@
 								<Line data={series.points} x="x" y="y" stroke={series.color} strokeWidth={2} />
 								<Dot data={series.points} x="x" y="y" fill={series.color} r={3} />
 							{/each}
-							<AxisX
-								tickFormat={(d) => String(d)}
-								style="color: #00ff00; font-size: 11px;"
-								tickRotate={lineXDomain.length > 6 ? -35 : 0}
-							/>
+							<AxisX tickFormat={(d) => String(d)} style="color: #00ff00; font-size: 11px;" />
 							<AxisY style="color: #e5e7eb; font-size: 11px;" />
 						</Plot>
 						<div class="mt-2 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
@@ -548,12 +590,13 @@
 						class="mb-4 space-y-2 rounded-xl border border-dashed border-base-300 bg-base-200/60 p-3"
 					>
 						<p class="text-xs text-base-content/60">
-							Paste CSV — first row = headers, first column = category / x-axis label.
+							Paste CSV — first row = headers, first column = category / x-axis. Column types are
+							auto-detected.
 						</p>
 						<textarea
 							class="textarea-bordered textarea h-28 w-full font-mono text-xs"
 							bind:value={csvPasteText}
-							placeholder={'Category,Destroyed,Damaged\nTanks,5,2\nAFVs,12,3'}
+							placeholder="Category,Destroyed,Damaged&#10;Tanks,5,2&#10;AFVs,12,3"
 						></textarea>
 						{#if csvPasteError}
 							<p class="text-xs text-error">{csvPasteError}</p>
@@ -574,25 +617,37 @@
 						<thead>
 							<tr class="bg-base-200">
 								{#each currentTable.headers as header, colIdx (colIdx)}
+									{@const colType = currentTable.colTypes[colIdx] ?? 'text'}
 									<th class="p-0">
-										<div class="group flex items-center">
+										<div class="group flex flex-col">
+											<!-- type badge + delete -->
+											<div class="flex items-center justify-between gap-1 px-1 pt-1">
+												<button
+													class="badge shrink-0 cursor-pointer font-mono badge-xs transition-colors select-none hover:badge-primary
+														{colType === 'number' ? 'badge-accent' : colType === 'date' ? 'badge-info' : 'badge-ghost'}"
+													onclick={() => cycleColType(colIdx)}
+													title="Click to cycle type: text → number → date"
+												>
+													{COL_TYPE_ICONS[colType]}
+												</button>
+												{#if currentTable.headers.length > 2 && colIdx > 0}
+													<button
+														class="px-0.5 text-xs leading-none text-error opacity-0 transition-opacity group-hover:opacity-100"
+														onclick={() => removeColumn(colIdx)}
+														title="Remove column">✕</button
+													>
+												{/if}
+											</div>
+											<!-- header name input -->
 											<input
 												type="text"
 												value={header}
 												oninput={(e) => updateHeader(colIdx, (e.target as HTMLInputElement).value)}
-												class="input input-xs w-full min-w-[4rem] input-ghost px-2 text-xs font-semibold focus:bg-base-100"
+												class="input input-xs w-full min-w-16 input-ghost px-2 text-xs font-semibold focus:bg-base-100"
 											/>
-											{#if currentTable.headers.length > 2 && colIdx > 0}
-												<button
-													class="btn shrink-0 px-1 text-error opacity-0 btn-ghost btn-xs group-hover:opacity-100"
-													onclick={() => removeColumn(colIdx)}
-													title="Remove column">✕</button
-												>
-											{/if}
 										</div>
 									</th>
 								{/each}
-								<!-- spacer for row-delete buttons -->
 								<th class="w-6 p-0"></th>
 							</tr>
 						</thead>
@@ -600,13 +655,19 @@
 							{#each currentTable.rows as row, rowIdx (rowIdx)}
 								<tr class="group hover:bg-base-200/40">
 									{#each row as cell, colIdx (colIdx)}
+										{@const colType = currentTable.colTypes[colIdx] ?? 'text'}
 										<td class="p-0">
 											<input
-												type="text"
+												type={colType === 'number'
+													? 'number'
+													: colType === 'date'
+														? 'date'
+														: 'text'}
 												value={cell}
 												oninput={(e) =>
 													updateCell(rowIdx, colIdx, (e.target as HTMLInputElement).value)}
-												class="input input-xs w-full min-w-[3rem] input-ghost px-2 text-xs focus:bg-base-100"
+												class="input input-xs w-full min-w-12 input-ghost px-2 text-xs focus:bg-base-100
+													{colType === 'number' ? 'text-right tabular-nums' : ''}"
 											/>
 										</td>
 									{/each}
@@ -623,10 +684,19 @@
 					</table>
 				</div>
 
-				<p class="mt-2 text-xs text-base-content/40">
-					Tip: click any cell to edit. Hover a row or column header to delete it. Use "Paste CSV" to
-					bulk-import data.
-				</p>
+				<!-- Legend -->
+				<div class="mt-2 flex flex-wrap gap-3 text-xs text-base-content/50">
+					<span class="flex items-center gap-1">
+						<span class="badge badge-ghost font-mono badge-xs">T</span> text
+					</span>
+					<span class="flex items-center gap-1">
+						<span class="badge font-mono badge-xs badge-accent">#</span> number
+					</span>
+					<span class="flex items-center gap-1">
+						<span class="badge font-mono badge-xs badge-info">📅</span> date
+					</span>
+					<span class="ml-auto">Click a badge to cycle the column type.</span>
+				</div>
 			</div>
 		</div>
 	</div>
