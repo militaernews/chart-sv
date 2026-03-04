@@ -3,45 +3,54 @@
 	import { onMount } from 'svelte';
 	import html2canvas from 'html2canvas-pro';
 	import Branding from '$lib/components/Branding.svelte';
-	import { Plot, BarX, RuleX, AxisX, AxisY, Line, Dot, AxisY as AxisYLine } from 'svelteplot';
+	import { Plot, BarX, RuleX, AxisX, AxisY, Line, Dot } from 'svelteplot';
 
 	type ChartMode = 'bar' | 'line';
 
-	let chartMode = $state<ChartMode>('bar');
+	// ── STATE
 
+	let chartMode = $state<ChartMode>('bar');
 	let title = $state('Russian Losses in Kharkiv');
 	let subtitle = $state('as of June 3, 2024');
-	let maxScaleValue = $state(0); // 0 means auto
-	let tableData = $state(`Category,Destroyed,Damaged
-Panzer,9,0
-Schützenpanzer,13,0
-Gepanzerte Fahrzeuge,1,0
-Mehrfachraktenwerfer,0,0
-Selbstfahrlafetten,0,0
-Gezogene Artillerie,0,0
-Luftverteidigungssysteme,2,0
-Führungsfahrzeuge,0,0
-Pionierfahrzeuge,10,1
-Radare und Jammer,1,0
-Lastkraftwagen,6,1
-Helikopter,0,0
-UAVs,0,0`);
+	let maxScaleValue = $state(0);
 
-	// Default line chart data (Date as x-axis, series as columns)
-	let lineTableData = $state(`Date,Tanks,AFVs,Artillery
-2024-05-10,2,5,1
-2024-05-17,5,12,3
-2024-05-24,9,24,6
-2024-05-31,14,38,9
-2024-06-07,18,47,12
-2024-06-14,22,58,15`);
+	type TableState = { headers: string[]; rows: string[][] };
 
-	// Default colors for legend items
+	let barTable = $state<TableState>({
+		headers: ['Category', 'Destroyed', 'Damaged'],
+		rows: [
+			['Panzer', '9', '0'],
+			['Schützenpanzer', '13', '0'],
+			['Gepanzerte Fahrzeuge', '1', '0'],
+			['Mehrfachraktenwerfer', '0', '0'],
+			['Selbstfahrlafetten', '0', '0'],
+			['Gezogene Artillerie', '0', '0'],
+			['Luftverteidigungssysteme', '2', '0'],
+			['Führungsfahrzeuge', '0', '0'],
+			['Pionierfahrzeuge', '10', '1'],
+			['Radare und Jammer', '1', '0'],
+			['Lastkraftwagen', '6', '1'],
+			['Helikopter', '0', '0'],
+			['UAVs', '0', '0']
+		]
+	});
+
+	let lineTable = $state<TableState>({
+		headers: ['Date', 'Tanks', 'AFVs', 'Artillery'],
+		rows: [
+			['2024-05-10', '2', '5', '1'],
+			['2024-05-17', '5', '12', '3'],
+			['2024-05-24', '9', '24', '6'],
+			['2024-05-31', '14', '38', '9'],
+			['2024-06-07', '18', '47', '12'],
+			['2024-06-14', '22', '58', '15']
+		]
+	});
+
 	let legendColors = $state<Record<string, string>>({
 		Destroyed: '#ff0000',
 		Damaged: '#ffaa00'
 	});
-
 	let lineColors = $state<Record<string, string>>({
 		Tanks: '#ff4444',
 		AFVs: '#ffaa00',
@@ -51,292 +60,316 @@ UAVs,0,0`);
 	let chartElement = $state<HTMLElement | null>(null);
 	let isExporting = $state(false);
 	let isLoaded = $state(false);
+	let csvPasteVisible = $state(false);
+	let csvPasteText = $state('');
+	let csvPasteError = $state('');
 
-	// ── BAR CHART LOGIC ──────────────────────────────────────────────────────
+	// ── HELPERS
 
-	const parsedData = $derived.by(() => {
-		const lines = tableData.trim().split('\n');
-		const headers = lines[0].split(',').map((h) => h.trim());
-		return lines
-			.slice(1)
-			.map((line) => {
-				const values = line.split(',');
-				const obj: Record<string, any> = {};
-				headers.forEach((header, i) => {
-					obj[header] = isNaN(Number(values[i])) ? values[i]?.trim() : parseInt(values[i]);
+	function csvToTable(csv: string): TableState | null {
+		const lines = csv.trim().split(/\r?\n/).filter(Boolean);
+		if (lines.length < 2) return null;
+		const headers = lines[0].split(',').map((s) => s.trim());
+		if (headers.length < 2) return null;
+		const rows = lines.slice(1).map((line) => {
+			const cells = line.split(',');
+			while (cells.length < headers.length) cells.push('');
+			return cells.slice(0, headers.length).map((s) => s.trim());
+		});
+		return { headers, rows };
+	}
+
+	// ── CURRENT TABLE ─────────────────────────────────────────────────────────
+
+	const currentTable = $derived(chartMode === 'bar' ? barTable : lineTable);
+
+	function setCurrentTable(t: TableState) {
+		if (chartMode === 'bar') barTable = t;
+		else lineTable = t;
+	}
+
+	// ── TABLE EDITING ─────────────────────────────────────────────────────────
+
+	function updateCell(rowIdx: number, colIdx: number, val: string) {
+		const t =
+			chartMode === 'bar'
+				? { ...barTable, rows: barTable.rows.map((r) => [...r]) }
+				: { ...lineTable, rows: lineTable.rows.map((r) => [...r]) };
+		t.rows[rowIdx][colIdx] = val;
+		setCurrentTable(t);
+	}
+
+	function updateHeader(colIdx: number, val: string) {
+		const t = { ...currentTable, headers: [...currentTable.headers] };
+		t.headers[colIdx] = val;
+		setCurrentTable(t);
+	}
+
+	function addRow() {
+		const t = {
+			...currentTable,
+			rows: [...currentTable.rows, currentTable.headers.map((_, i) => (i === 0 ? 'New' : '0'))]
+		};
+		setCurrentTable(t);
+	}
+
+	function removeRow(idx: number) {
+		setCurrentTable({ ...currentTable, rows: currentTable.rows.filter((_, i) => i !== idx) });
+	}
+
+	function addColumn() {
+		const name = `Col${currentTable.headers.length}`;
+		setCurrentTable({
+			headers: [...currentTable.headers, name],
+			rows: currentTable.rows.map((r) => [...r, '0'])
+		});
+	}
+
+	function removeColumn(colIdx: number) {
+		if (currentTable.headers.length <= 2) return;
+		setCurrentTable({
+			headers: currentTable.headers.filter((_, i) => i !== colIdx),
+			rows: currentTable.rows.map((r) => r.filter((_, i) => i !== colIdx))
+		});
+	}
+
+	function applyCSVPaste() {
+		csvPasteError = '';
+		const parsed = csvToTable(csvPasteText);
+		if (!parsed) {
+			csvPasteError = 'Could not parse CSV. Ensure at least 2 columns and a header row.';
+			return;
+		}
+		setCurrentTable(parsed);
+		csvPasteText = '';
+		csvPasteVisible = false;
+	}
+
+	// ── BAR CHART DERIVED ─────────────────────────────────────────────────────
+
+	const legendItems = $derived(barTable.headers.slice(1).filter((h) => h !== 'Total'));
+
+	const parsedBarData = $derived.by(() =>
+		barTable.rows
+			.map((row) => {
+				const obj: Record<string, any> = { Category: row[0] };
+				barTable.headers.slice(1).forEach((h, i) => {
+					obj[h] = Number(row[i + 1]) || 0;
 				});
 				return obj;
 			})
-			.filter((item) =>
-				Object.keys(item).some((key) => key !== 'Category' && (item[key] || 0) > 0)
-			);
-	});
+			.filter((item) => legendItems.some((k) => (item[k] || 0) > 0))
+	);
 
-	const legendItems = $derived.by(() => {
-		if (!tableData) return [];
-		return tableData
-			.trim()
-			.split('\n')[0]
-			.split(',')
-			.map((h) => h.trim())
-			.filter((h) => h !== 'Category' && h !== 'Total');
-	});
-
-	const chartData = $derived.by(() => {
+	const barChartData = $derived.by(() => {
 		const rows: { category: string; type: string; value: number }[] = [];
-		for (const item of parsedData) {
-			for (const legendItem of legendItems) {
-				if ((item[legendItem] || 0) > 0) {
-					rows.push({ category: item.Category, type: legendItem, value: item[legendItem] || 0 });
-				}
-			}
-		}
+		for (const item of parsedBarData)
+			for (const key of legendItems)
+				if ((item[key] || 0) > 0)
+					rows.push({ category: item.Category, type: key, value: item[key] });
 		return rows;
 	});
 
-	const categories = $derived(parsedData.map((d) => d.Category));
-
-	const maxValue = $derived(
-		Math.max(...parsedData.flatMap((d) => legendItems.map((key) => d[key] || 0)))
+	const barCategories = $derived(parsedBarData.map((d) => d.Category));
+	const barMaxValue = $derived(
+		Math.max(1, ...parsedBarData.flatMap((d) => legendItems.map((k) => d[k] || 0)))
 	);
-	const effectiveMaxValue = $derived(maxScaleValue > 0 ? maxScaleValue : maxValue);
+	const effectiveBarMax = $derived(maxScaleValue > 0 ? maxScaleValue : barMaxValue);
 	const colorFill = $derived((d: { type: string }) => legendColors[d.type] ?? '#888');
 
-	// ── LINE CHART LOGIC ─────────────────────────────────────────────────────
-
-	const parsedLineData = $derived.by(() => {
-		const lines = lineTableData.trim().split('\n');
-		const headers = lines[0].split(',').map((h) => h.trim());
-		return lines.slice(1).map((line) => {
-			const values = line.split(',');
-			const obj: Record<string, any> = {};
-			headers.forEach((header, i) => {
-				const val = values[i]?.trim();
-				if (header === headers[0]) {
-					// x-axis column — keep as string (date or label)
-					obj[header] = val ?? '';
-				} else {
-					obj[header] = isNaN(Number(val)) ? (val ?? '') : Number(val);
-				}
-			});
-			return obj;
+	$effect(() => {
+		const defaults = ['#ff0000', '#ffaa00', '#ffdd00', '#666666'];
+		const c = { ...legendColors };
+		legendItems.forEach((item, i) => {
+			if (!c[item]) c[item] = defaults[i % defaults.length];
 		});
+		legendColors = c;
 	});
 
-	const lineSeriesKeys = $derived.by(() => {
-		if (!lineTableData) return [];
-		return lineTableData
-			.trim()
-			.split('\n')[0]
-			.split(',')
-			.map((h) => h.trim())
-			.slice(1); // everything after the first (x) column
-	});
+	// ── LINE CHART DERIVED ────────────────────────────────────────────────────
 
-	const lineXKey = $derived.by(() => {
-		if (!lineTableData) return 'Date';
-		return lineTableData.trim().split('\n')[0].split(',')[0].trim();
-	});
+	const lineSeriesKeys = $derived(lineTable.headers.slice(1));
 
-	// Flatten line data: { x, series, value }
-	const flatLineData = $derived.by(() => {
-		const rows: { x: string; series: string; value: number }[] = [];
-		for (const item of parsedLineData) {
-			for (const key of lineSeriesKeys) {
-				rows.push({ x: item[lineXKey], series: key, value: Number(item[key]) || 0 });
-			}
-		}
-		return rows;
-	});
-
-	// Per-series arrays for individual <Line> marks
-	const lineSeriesData = $derived.by(() => {
-		return lineSeriesKeys.map((key) => ({
+	const lineSeriesData = $derived.by(() =>
+		lineSeriesKeys.map((key) => ({
 			key,
 			color: lineColors[key] ?? '#888',
-			points: parsedLineData.map((row) => ({ x: row[lineXKey], y: Number(row[key]) || 0 }))
-		}));
-	});
+			points: lineTable.rows.map((row) => ({
+				x: row[0],
+				y: Number(row[lineTable.headers.indexOf(key)]) || 0
+			}))
+		}))
+	);
 
-	const lineMaxY = $derived.by(() => {
-		const vals = flatLineData.map((d) => d.value);
-		return vals.length ? Math.max(...vals) : 10;
-	});
+	const lineMaxY = $derived(
+		Math.max(
+			1,
+			...lineTable.rows.flatMap((row) => lineSeriesKeys.map((_, i) => Number(row[i + 1]) || 0))
+		)
+	);
+	const effectiveLineMax = $derived(maxScaleValue > 0 ? maxScaleValue : lineMaxY);
+	const lineXDomain = $derived(lineTable.rows.map((r) => r[0]));
 
-	const effectiveLineMaxY = $derived(maxScaleValue > 0 ? maxScaleValue : lineMaxY);
-
-	const lineXDomain = $derived(parsedLineData.map((d) => d[lineXKey]));
-
-	// Sync lineColors with current series keys
 	$effect(() => {
-		const defaultColors = ['#ff4444', '#ffaa00', '#44aaff', '#44ff88', '#cc44ff', '#ff8844'];
-		const newColors = { ...lineColors };
-		lineSeriesKeys.forEach((key, i) => {
-			if (!newColors[key]) newColors[key] = defaultColors[i % defaultColors.length];
+		const defaults = ['#ff4444', '#ffaa00', '#44aaff', '#44ff88', '#cc44ff'];
+		const c = { ...lineColors };
+		lineSeriesKeys.forEach((k, i) => {
+			if (!c[k]) c[k] = defaults[i % defaults.length];
 		});
-		lineColors = newColors;
+		lineColors = c;
 	});
 
-	// Sync bar legendColors
-	$effect(() => {
-		const newColors = { ...legendColors };
-		legendItems.forEach((item, index) => {
-			if (!newColors[item]) {
-				const defaultColors = ['#ff0000', '#ffaa00', '#ffdd00', '#666666'];
-				newColors[item] = defaultColors[index % defaultColors.length];
-			}
-		});
-		legendColors = newColors;
-	});
-
-	// ── STORAGE ──────────────────────────────────────────────────────────────
+	// ── STORAGE ───────────────────────────────────────────────────────────────
 
 	onMount(async () => {
-		const result = await window.storage.get('chartData').catch(() => null);
+		const result = await window.storage.get('chartDataV2').catch(() => null);
 		if (result?.value) {
-			const data = JSON.parse(result.value);
-			if (data.title !== undefined) title = data.title;
-			if (data.subtitle !== undefined) subtitle = data.subtitle;
-			if (data.maxScaleValue !== undefined) maxScaleValue = data.maxScaleValue;
-			if (data.tableData !== undefined) tableData = data.tableData;
-			if (data.legendColors !== undefined) legendColors = data.legendColors;
-			if (data.chartMode !== undefined) chartMode = data.chartMode;
-			if (data.lineTableData !== undefined) lineTableData = data.lineTableData;
-			if (data.lineColors !== undefined) lineColors = data.lineColors;
+			try {
+				const data = JSON.parse(result.value);
+				if (data.title) title = data.title;
+				if (data.subtitle !== undefined) subtitle = data.subtitle;
+				if (data.maxScaleValue !== undefined) maxScaleValue = data.maxScaleValue;
+				if (data.barTable) barTable = data.barTable;
+				if (data.lineTable) lineTable = data.lineTable;
+				if (data.legendColors) legendColors = data.legendColors;
+				if (data.lineColors) lineColors = data.lineColors;
+				if (data.chartMode) chartMode = data.chartMode;
+			} catch {}
 		}
 		isLoaded = true;
 	});
 
 	$effect(() => {
 		if (!isLoaded) return;
-		const data = {
-			title,
-			subtitle,
-			maxScaleValue,
-			tableData,
-			legendColors,
-			chartMode,
-			lineTableData,
-			lineColors
-		};
-		window.storage.set('chartData', JSON.stringify(data)).catch(console.error);
+		window.storage
+			.set(
+				'chartDataV2',
+				JSON.stringify({
+					title,
+					subtitle,
+					maxScaleValue,
+					barTable,
+					lineTable,
+					legendColors,
+					lineColors,
+					chartMode
+				})
+			)
+			.catch(console.error);
 	});
 
 	// ── EXAMPLES ─────────────────────────────────────────────────────────────
 
-	function loadExample1() {
+	function loadBarExample1() {
 		chartMode = 'bar';
 		title = 'Russian Losses in Kharkiv';
 		subtitle = 'June 3, 2024';
-		tableData = `Category,Destroyed,Damaged
-Panzer,9,0
-Schützenpanzer,13,0
-Gepanzerte Fahrzeuge,1,0
-Mehrfachraktenwerfer,0,0
-Selbstfahrlafetten,0,0
-Gezogene Artillerie,0,0
-Luftverteidigungssysteme,2,0
-Führungsfahrzeuge,0,0
-Pionierfahrzeuge,10,1
-Radare und Jammer,1,0
-Lastkraftwagen,6,1
-Helikopter,0,0
-UAVs,0,0`;
+		barTable = {
+			headers: ['Category', 'Destroyed', 'Damaged'],
+			rows: [
+				['Panzer', '9', '0'],
+				['Schützenpanzer', '13', '0'],
+				['Gepanzerte Fahrzeuge', '1', '0'],
+				['Mehrfachraktenwerfer', '0', '0'],
+				['Selbstfahrlafetten', '0', '0'],
+				['Pionierfahrzeuge', '10', '1'],
+				['Radare und Jammer', '1', '0'],
+				['Lastkraftwagen', '6', '1']
+			]
+		};
 	}
-
-	function loadExample2() {
+	function loadBarExample2() {
 		chartMode = 'bar';
-		title = 'Russian 2024 Kharkiv Oblast Offensive Losses';
+		title = 'Russian 2024 Kharkiv Offensive Losses';
 		subtitle = 'as of 2024-08-26';
-		tableData = `Category,Destroyed,Abandoned,Captured,Damaged
-Tanks,22,0,2,0
-Armoured Fighting Vehicles,58,0,0,1
-Infantry Mobility Vehicles,4,0,0,0
-MLRS,1,0,0,0
-Self-propelled Artillery,1,0,0,2
-Towed Artillery,0,0,0,0
-Anti-aircraft Systems,3,0,0,0
-Command Vehicles,0,0,0,0
-Engineering,22,1,0,3
-Radars and Jammers,1,0,0,1
-Trucks,36,0,0,1
-Aircraft,0,0,0,0
-Helicopters,0,0,0,0
-Drones,3,0,0,0`;
+		barTable = {
+			headers: ['Category', 'Destroyed', 'Abandoned', 'Captured', 'Damaged'],
+			rows: [
+				['Tanks', '22', '0', '2', '0'],
+				['AFVs', '58', '0', '0', '1'],
+				['IMVs', '4', '0', '0', '0'],
+				['MLRS', '1', '0', '0', '0'],
+				['SP Artillery', '1', '0', '0', '2'],
+				['AA Systems', '3', '0', '0', '0'],
+				['Engineering', '22', '1', '0', '3'],
+				['Radars', '1', '0', '0', '1'],
+				['Trucks', '36', '0', '0', '1'],
+				['Drones', '3', '0', '0', '0']
+			]
+		};
 	}
-
 	function loadLineExample1() {
 		chartMode = 'line';
-		title = 'Russian Cumulative Losses — Kharkiv Offensive';
+		title = 'Russian Cumulative Losses — Kharkiv';
 		subtitle = 'May–June 2024';
-		lineTableData = `Date,Tanks,AFVs,Artillery
-2024-05-10,2,5,1
-2024-05-17,5,12,3
-2024-05-24,9,24,6
-2024-05-31,14,38,9
-2024-06-07,18,47,12
-2024-06-14,22,58,15`;
+		lineTable = {
+			headers: ['Date', 'Tanks', 'AFVs', 'Artillery'],
+			rows: [
+				['2024-05-10', '2', '5', '1'],
+				['2024-05-17', '5', '12', '3'],
+				['2024-05-24', '9', '24', '6'],
+				['2024-05-31', '14', '38', '9'],
+				['2024-06-07', '18', '47', '12'],
+				['2024-06-14', '22', '58', '15']
+			]
+		};
 	}
-
 	function loadLineExample2() {
 		chartMode = 'line';
 		title = 'Frontline Change (km²) Over Time';
 		subtitle = '2024 Eastern Front';
-		lineTableData = `Week,Ukraine Control,Russia Control,Contested
-W1,42000,38000,1200
-W2,41800,38100,1250
-W3,41500,38300,1300
-W4,41200,38500,1400
-W5,41000,38700,1350
-W6,40900,38900,1200
-W7,40700,39000,1100`;
+		lineTable = {
+			headers: ['Week', 'Ukraine', 'Russia', 'Contested'],
+			rows: [
+				['W1', '42000', '38000', '1200'],
+				['W2', '41800', '38100', '1250'],
+				['W3', '41500', '38300', '1300'],
+				['W4', '41200', '38500', '1400'],
+				['W5', '41000', '38700', '1350'],
+				['W6', '40900', '38900', '1200'],
+				['W7', '40700', '39000', '1100']
+			]
+		};
 	}
 
-	// ── EXPORT ───────────────────────────────────────────────────────────────
+	// ── EXPORT ────────────────────────────────────────────────────────────────
 
 	async function exportAsImage() {
 		if (!chartElement) return;
 		isExporting = true;
 		try {
-			await new Promise((resolve) => setTimeout(resolve, 100));
+			await new Promise((r) => setTimeout(r, 100));
 			const canvas = await html2canvas(chartElement, {
 				backgroundColor: '#1a1a1a',
 				scale: 2,
 				logging: false,
 				useCORS: true,
 				allowTaint: true,
-				windowWidth: 2000,
-				windowHeight: 800,
-				onclone: (clonedDoc) => {
-					const clonedElement = clonedDoc.querySelector('[data-export-chart]');
-					if (clonedElement) {
-						clonedElement.querySelectorAll('*').forEach((el) => {
-							const htmlEl = el as HTMLElement;
-							const computedStyle = window.getComputedStyle(htmlEl);
-							if (
-								computedStyle.backgroundColor &&
-								computedStyle.backgroundColor !== 'rgba(0, 0, 0, 0)'
-							) {
-								htmlEl.style.backgroundColor = computedStyle.backgroundColor;
-							}
-							if (computedStyle.color) htmlEl.style.color = computedStyle.color;
-							if (computedStyle.borderColor) htmlEl.style.borderColor = computedStyle.borderColor;
+				onclone: (doc) => {
+					doc
+						.querySelector('[data-export-chart]')
+						?.querySelectorAll('*')
+						.forEach((el) => {
+							const h = el as HTMLElement;
+							const cs = window.getComputedStyle(h);
+							if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)')
+								h.style.backgroundColor = cs.backgroundColor;
+							if (cs.color) h.style.color = cs.color;
 						});
-					}
 				}
 			});
 			canvas.toBlob((blob) => {
-				if (!blob) throw new Error('Failed to create image blob');
+				if (!blob) return;
 				const url = URL.createObjectURL(blob);
-				const link = document.createElement('a');
-				link.download = `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.png`;
-				link.href = url;
-				link.click();
+				const a = document.createElement('a');
+				a.download = `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.png`;
+				a.href = url;
+				a.click();
 				setTimeout(() => URL.revokeObjectURL(url), 100);
 			}, 'image/png');
-		} catch (error) {
-			console.error('Export failed:', error);
-			alert('Export failed. Please try again.');
+		} catch (e) {
+			console.error(e);
+			alert('Export failed.');
 		} finally {
 			isExporting = false;
 		}
@@ -344,54 +377,34 @@ W7,40700,39000,1100`;
 </script>
 
 <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-	<!-- Input Section -->
+	<!-- ── CONFIG PANEL ── -->
 	<div class="card bg-base-100 shadow-xl">
-		<div class="card-body p-4">
+		<div class="card-body space-y-3 p-4">
 			<h2 class="card-title text-lg">Configuration</h2>
 
-			<!-- Chart Mode Toggle -->
-			<div class="form-control">
-				<label class="label py-1">
-					<span class="label-text text-xs">Chart Type</span>
-				</label>
-				<div class="join w-full">
-					<button
-						class="btn join-item flex-1 btn-sm {chartMode === 'bar'
-							? 'btn-primary'
-							: 'btn-outline'}"
-						onclick={() => (chartMode = 'bar')}
-					>
-						📊 Bar
-					</button>
-					<button
-						class="btn join-item flex-1 btn-sm {chartMode === 'line'
-							? 'btn-primary'
-							: 'btn-outline'}"
-						onclick={() => (chartMode = 'line')}
-					>
-						📈 Line
-					</button>
-				</div>
+			<div class="join w-full">
+				<button
+					class="btn join-item flex-1 btn-sm {chartMode === 'bar' ? 'btn-primary' : 'btn-outline'}"
+					onclick={() => (chartMode = 'bar')}>📊 Bar</button
+				>
+				<button
+					class="btn join-item flex-1 btn-sm {chartMode === 'line' ? 'btn-primary' : 'btn-outline'}"
+					onclick={() => (chartMode = 'line')}>📈 Line</button
+				>
 			</div>
 
 			<div class="form-control">
-				<label class="label py-1">
-					<span class="label-text text-xs">Chart Title</span>
-				</label>
+				<label class="label py-1"><span class="label-text text-xs">Chart Title</span></label>
 				<input type="text" bind:value={title} class="input-bordered input input-sm" />
 			</div>
-
 			<div class="form-control">
-				<label class="label py-1">
-					<span class="label-text text-xs">Subtitle/Date</span>
-				</label>
+				<label class="label py-1"><span class="label-text text-xs">Subtitle / Date</span></label>
 				<input type="text" bind:value={subtitle} class="input-bordered input input-sm" />
 			</div>
-
 			<div class="form-control">
-				<label class="label py-1">
-					<span class="label-text text-xs">Max Scale Value (0 = auto)</span>
-				</label>
+				<label class="label py-1"
+					><span class="label-text text-xs">Max Scale (0 = auto)</span></label
+				>
 				<input
 					type="number"
 					bind:value={maxScaleValue}
@@ -400,160 +413,220 @@ W7,40700,39000,1100`;
 				/>
 			</div>
 
-			<!-- Data input — switches based on mode -->
-			{#if chartMode === 'bar'}
-				<div class="form-control">
-					<label class="label py-1">
-						<span class="label-text text-xs">Table Data (CSV — first col = Category)</span>
-					</label>
-					<textarea
-						class="textarea-bordered textarea h-48 font-mono text-xs"
-						bind:value={tableData}
-						placeholder="Category,Destroyed,Damaged"
-					></textarea>
+			<div class="form-control">
+				<label class="label py-1"><span class="label-text text-xs">Series Colors</span></label>
+				<div class="space-y-1">
+					{#each chartMode === 'bar' ? legendItems : lineSeriesKeys as key (key)}
+						<div class="flex items-center gap-2">
+							<input
+								type="color"
+								bind:value={chartMode === 'bar' ? legendColors[key] : lineColors[key]}
+								class="h-7 w-10 cursor-pointer rounded border"
+							/>
+							<span class="truncate text-xs">{key}</span>
+						</div>
+					{/each}
 				</div>
+			</div>
 
-				<div class="form-control">
-					<label class="label py-1">
-						<span class="label-text text-xs">Legend Colors</span>
-					</label>
-					<div class="space-y-2">
-						{#each legendItems as item (item)}
-							<div class="flex items-center gap-2">
-								<input
-									type="color"
-									bind:value={legendColors[item]}
-									class="h-8 w-12 cursor-pointer rounded border"
-								/>
-								<span class="text-xs">{item}</span>
-							</div>
-						{/each}
-					</div>
+			<div>
+				<p class="mb-1 text-xs text-base-content/50">Examples</p>
+				<div class="flex flex-wrap gap-1">
+					{#if chartMode === 'bar'}
+						<button class="btn btn-outline btn-xs" onclick={loadBarExample1}>Bar 1</button>
+						<button class="btn btn-outline btn-xs" onclick={loadBarExample2}>Bar 2</button>
+					{:else}
+						<button class="btn btn-outline btn-xs" onclick={loadLineExample1}>Line 1</button>
+						<button class="btn btn-outline btn-xs" onclick={loadLineExample2}>Line 2</button>
+					{/if}
 				</div>
+			</div>
 
-				<div class="mt-2 flex flex-wrap gap-1">
-					<button class="btn btn-outline btn-xs" onclick={loadExample1}>Example 1</button>
-					<button class="btn btn-outline btn-xs" onclick={loadExample2}>Example 2</button>
-				</div>
-			{:else}
-				<div class="form-control">
-					<label class="label py-1">
-						<span class="label-text text-xs">Line Data (CSV — first col = X axis)</span>
-					</label>
-					<textarea
-						class="textarea-bordered textarea h-48 font-mono text-xs"
-						bind:value={lineTableData}
-						placeholder="Date,Series1,Series2"
-					></textarea>
-				</div>
-
-				<div class="form-control">
-					<label class="label py-1">
-						<span class="label-text text-xs">Series Colors</span>
-					</label>
-					<div class="space-y-2">
-						{#each lineSeriesKeys as key (key)}
-							<div class="flex items-center gap-2">
-								<input
-									type="color"
-									bind:value={lineColors[key]}
-									class="h-8 w-12 cursor-pointer rounded border"
-								/>
-								<span class="text-xs">{key}</span>
-							</div>
-						{/each}
-					</div>
-				</div>
-
-				<div class="mt-2 flex flex-wrap gap-1">
-					<button class="btn btn-outline btn-xs" onclick={loadLineExample1}>Example 1</button>
-					<button class="btn btn-outline btn-xs" onclick={loadLineExample2}>Example 2</button>
-				</div>
-			{/if}
-
-			<button class="btn mt-2 btn-sm btn-primary" onclick={exportAsImage} disabled={isExporting}>
-				{isExporting ? 'Exporting...' : '📸 Export'}
+			<button class="btn w-full btn-sm btn-primary" onclick={exportAsImage} disabled={isExporting}>
+				{isExporting ? 'Exporting…' : '📸 Export PNG'}
 			</button>
 		</div>
 	</div>
 
-	<!-- Chart Section -->
-	<div class="card text-neutral-content shadow-xl lg:col-span-2">
-		<div class="card-body">
-			<div bind:this={chartElement} data-export-chart class="relative p-4 pr-6">
-				<!-- Branding Component -->
-				<Branding isMobile={false} />
+	<!-- ── CHART + TABLE PANEL ── -->
+	<div class="flex flex-col gap-4 lg:col-span-2">
+		<!-- Chart -->
+		<div class="card text-neutral-content shadow-xl">
+			<div class="card-body p-4">
+				<div bind:this={chartElement} data-export-chart class="relative p-4 pr-6">
+					<Branding isMobile={false} />
+					<div class="mb-6 text-center">
+						<h3 class="text-md font-semibold md:text-base">{title}</h3>
+						{#if subtitle?.trim()}
+							<div class="mx-auto my-2 h-px w-48 bg-gray-600"></div>
+							<p class="text-xs text-gray-400 md:text-sm">{subtitle}</p>
+						{/if}
+					</div>
 
-				<!-- Title -->
-				<div class="mb-6 text-center">
-					<h3 class="text-md font-semibold md:text-base">{title}</h3>
-					{#if subtitle && subtitle.trim()}
-						<div class="mx-auto my-2 h-px w-48 bg-gray-600"></div>
-						<p class="text-xs text-gray-400 md:text-sm">{subtitle}</p>
+					{#if chartMode === 'bar'}
+						<Plot
+							height={Math.max(200, barCategories.length * 36 + 60)}
+							marginLeft={140}
+							marginBottom={30}
+							marginRight={40}
+							x={{ domain: [0, effectiveBarMax], grid: true, tickCount: 5 }}
+							y={{ domain: [...barCategories].reverse(), padding: 0.2 }}
+							style="background: transparent; color: #9ca3af; font-size: 12px;"
+						>
+							<BarX data={barChartData} x="value" y="category" fill={colorFill} stack inset={1} />
+							<AxisX tickFormat={(d) => String(d)} style="color: #00ff00; font-size: 11px;" />
+							<AxisY style="color: #e5e7eb; font-size: 11px;" />
+							<RuleX x={0} />
+						</Plot>
+						<div class="mt-4 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
+							{#each legendItems as item (item)}
+								<div class="flex items-center gap-2">
+									<div class="size-4 rounded" style="background-color: {legendColors[item]}"></div>
+									<span>{item}</span>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<Plot
+							height={300}
+							marginLeft={50}
+							marginBottom={50}
+							marginRight={20}
+							marginTop={10}
+							x={{ domain: lineXDomain, grid: true, padding: 0.05 }}
+							y={{ domain: [0, effectiveLineMax], grid: true, tickCount: 6 }}
+							style="background: transparent; color: #9ca3af; font-size: 12px;"
+						>
+							{#each lineSeriesData as series (series.key)}
+								<Line data={series.points} x="x" y="y" stroke={series.color} strokeWidth={2} />
+								<Dot data={series.points} x="x" y="y" fill={series.color} r={3} />
+							{/each}
+							<AxisX
+								tickFormat={(d) => String(d)}
+								style="color: #00ff00; font-size: 11px;"
+								tickRotate={lineXDomain.length > 6 ? -35 : 0}
+							/>
+							<AxisY style="color: #e5e7eb; font-size: 11px;" />
+						</Plot>
+						<div class="mt-2 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
+							{#each lineSeriesData as s (s.key)}
+								<div class="flex items-center gap-2">
+									<div class="h-0.5 w-5 rounded" style="background-color:{s.color}"></div>
+									<div class="size-2 rounded-full" style="background-color:{s.color}"></div>
+									<span>{s.key}</span>
+								</div>
+							{/each}
+						</div>
 					{/if}
 				</div>
+			</div>
+		</div>
 
-				{#if chartMode === 'bar'}
-					<!-- ── BAR CHART ── -->
-					<Plot
-						height={Math.max(200, categories.length * 36 + 60)}
-						marginLeft={140}
-						marginBottom={30}
-						marginRight={40}
-						x={{ domain: [0, effectiveMaxValue], grid: true, tickCount: 5 }}
-						y={{ domain: [...categories].reverse(), padding: 0.2 }}
-						style="background: transparent; color: #9ca3af; font-size: 12px;"
-					>
-						<BarX data={chartData} x="value" y="category" fill={colorFill} stack inset={1} />
-						<AxisX tickFormat={(d) => String(d)} style="color: #00ff00; font-size: 11px;" />
-						<AxisY style="color: #e5e7eb; font-size: 11px;" />
-						<RuleX x={0} />
-					</Plot>
-
-					<!-- Bar Legend -->
-					<div class="mt-4 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
-						{#each legendItems as item (item)}
-							<div class="flex items-center gap-2">
-								<div class="size-4 rounded" style="background-color: {legendColors[item]}" />
-								<span>{item}</span>
-							</div>
-						{/each}
+		<!-- Data Editor -->
+		<div class="card bg-base-100 shadow-xl">
+			<div class="card-body p-4">
+				<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+					<h2 class="card-title text-base">Data Editor</h2>
+					<div class="flex flex-wrap gap-1">
+						<button class="btn btn-outline btn-xs" onclick={addRow}>+ Row</button>
+						<button class="btn btn-outline btn-xs" onclick={addColumn}>+ Col</button>
+						<button
+							class="btn btn-xs {csvPasteVisible ? 'btn-warning' : 'btn-outline'}"
+							onclick={() => {
+								csvPasteVisible = !csvPasteVisible;
+								csvPasteError = '';
+							}}
+						>
+							{csvPasteVisible ? '✕ Cancel' : '📋 Paste CSV'}
+						</button>
 					</div>
-				{:else}
-					<!-- ── LINE CHART ── -->
-					<Plot
-						height={Math.max(220, 300)}
-						marginLeft={50}
-						marginBottom={50}
-						marginRight={20}
-						marginTop={10}
-						x={{ domain: lineXDomain, grid: true, padding: 0.05 }}
-						y={{ domain: [0, effectiveLineMaxY], grid: true, tickCount: 6 }}
-						style="background: transparent; color: #9ca3af; font-size: 12px;"
-					>
-						{#each lineSeriesData as series (series.key)}
-							<Line data={series.points} x="x" y="y" stroke={series.color} strokeWidth={2} />
-							<Dot data={series.points} x="x" y="y" fill={series.color} r={3} />
-						{/each}
-						<AxisX
-							tickFormat={(d) => String(d)}
-							style="color: #00ff00; font-size: 11px;"
-							tickRotate={lineXDomain.length > 6 ? -35 : 0}
-						/>
-						<AxisYLine style="color: #e5e7eb; font-size: 11px;" />
-					</Plot>
+				</div>
 
-					<!-- Line Legend -->
-					<div class="mt-2 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
-						{#each lineSeriesData as series (series.key)}
-							<div class="flex items-center gap-2">
-								<div class="h-0.5 w-6 rounded" style="background-color: {series.color}"></div>
-								<div class="size-2 rounded-full" style="background-color: {series.color}"></div>
-								<span>{series.key}</span>
-							</div>
-						{/each}
+				<!-- CSV paste drawer -->
+				{#if csvPasteVisible}
+					<div
+						class="mb-4 space-y-2 rounded-xl border border-dashed border-base-300 bg-base-200/60 p-3"
+					>
+						<p class="text-xs text-base-content/60">
+							Paste CSV — first row = headers, first column = category / x-axis label.
+						</p>
+						<textarea
+							class="textarea-bordered textarea h-28 w-full font-mono text-xs"
+							bind:value={csvPasteText}
+							placeholder={'Category,Destroyed,Damaged\nTanks,5,2\nAFVs,12,3'}
+						></textarea>
+						{#if csvPasteError}
+							<p class="text-xs text-error">{csvPasteError}</p>
+						{/if}
+						<button
+							class="btn btn-sm btn-primary"
+							onclick={applyCSVPaste}
+							disabled={!csvPasteText.trim()}
+						>
+							Apply CSV →
+						</button>
 					</div>
 				{/if}
+
+				<!-- Editable table -->
+				<div class="overflow-x-auto rounded-lg border border-base-300">
+					<table class="table w-full table-xs">
+						<thead>
+							<tr class="bg-base-200">
+								{#each currentTable.headers as header, colIdx (colIdx)}
+									<th class="p-0">
+										<div class="group flex items-center">
+											<input
+												type="text"
+												value={header}
+												oninput={(e) => updateHeader(colIdx, (e.target as HTMLInputElement).value)}
+												class="input input-xs w-full min-w-[4rem] input-ghost px-2 text-xs font-semibold focus:bg-base-100"
+											/>
+											{#if currentTable.headers.length > 2 && colIdx > 0}
+												<button
+													class="btn shrink-0 px-1 text-error opacity-0 btn-ghost btn-xs group-hover:opacity-100"
+													onclick={() => removeColumn(colIdx)}
+													title="Remove column">✕</button
+												>
+											{/if}
+										</div>
+									</th>
+								{/each}
+								<!-- spacer for row-delete buttons -->
+								<th class="w-6 p-0"></th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each currentTable.rows as row, rowIdx (rowIdx)}
+								<tr class="group hover:bg-base-200/40">
+									{#each row as cell, colIdx (colIdx)}
+										<td class="p-0">
+											<input
+												type="text"
+												value={cell}
+												oninput={(e) =>
+													updateCell(rowIdx, colIdx, (e.target as HTMLInputElement).value)}
+												class="input input-xs w-full min-w-[3rem] input-ghost px-2 text-xs focus:bg-base-100"
+											/>
+										</td>
+									{/each}
+									<td class="w-6 p-0">
+										<button
+											class="btn px-1 text-error opacity-0 btn-ghost btn-xs group-hover:opacity-100"
+											onclick={() => removeRow(rowIdx)}
+											title="Delete row">✕</button
+										>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+
+				<p class="mt-2 text-xs text-base-content/40">
+					Tip: click any cell to edit. Hover a row or column header to delete it. Use "Paste CSV" to
+					bulk-import data.
+				</p>
 			</div>
 		</div>
 	</div>
