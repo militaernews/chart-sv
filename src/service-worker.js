@@ -82,6 +82,3 @@ sw.addEventListener('activate', (event) => {
 		})
 	);
 });
-
-// Start the checker when service worker starts
-startNotificationChecker();

@@ -16,12 +16,15 @@
 
 	const COL_TYPE_CYCLE: ColType[] = ['text', 'number', 'date'];
 
-	// ── STATE ────────────────────────────────────────────────────────────────
+	// ── STATE
 
 	let chartMode = $state<ChartMode>('bar');
 	let title = $state('Russian Losses in Kharkiv');
 	let subtitle = $state('as of June 3, 2024');
 	let maxScaleValue = $state(0);
+	let showAxisLabels = $state(false);
+	let xAxisLabel = $state('');
+	let yAxisLabel = $state('');
 
 	type TableState = {
 		headers: string[];
@@ -75,16 +78,32 @@
 	let chartElement = $state<HTMLElement | null>(null);
 	let isExporting = $state(false);
 	let isLoaded = $state(false);
-	let csvPasteVisible = $state(false);
-	let csvPasteText = $state('');
 	let csvPasteError = $state('');
 
+	async function pasteCSVFromClipboard() {
+		csvPasteError = '';
+		try {
+			const text = await navigator.clipboard.readText();
+			if (!text?.trim()) {
+				csvPasteError = 'Clipboard is empty.';
+				return;
+			}
+			const parsed = csvToTable(text);
+			if (!parsed) {
+				csvPasteError = 'Could not parse clipboard as CSV — need ≥2 columns and a header row.';
+				return;
+			}
+			if (chartMode === 'bar') barTable = parsed;
+			else lineTable = parsed;
+		} catch {
+			csvPasteError = 'Clipboard access denied. Please allow clipboard permissions and try again.';
+		}
+	}
 	// ── COLUMN SETTINGS MODAL ─────────────────────────────────────────────────
 
 	let modalOpen = $state(false);
 	let modalColIdx = $state(0);
 
-	// FIX: derive directly from the correct table's state so modal always reflects current values
 	const modalColType = $derived(
 		chartMode === 'bar'
 			? (barTable.colTypes[modalColIdx] ?? 'text')
@@ -97,8 +116,6 @@
 			: (lineColors[lineTable.headers[modalColIdx]] ?? '#888888')
 	);
 
-	// FIX: openColModal uses stopPropagation to prevent any parent click handlers
-	// from interfering, and explicitly sets both state vars before opening
 	function openColModal(e: MouseEvent, colIdx: number) {
 		e.stopPropagation();
 		e.preventDefault();
@@ -157,7 +174,7 @@
 		t.rows.forEach((r) => r.splice(colIdx, 1));
 	}
 
-	// ── CSV ───────────────────────────────────────────────────────────────────
+	// ── CSV ───
 
 	const DATE_RE = /^\d{4}-\d{2}-\d{2}$|^\d{2}[./]\d{2}[./]\d{4}$/;
 
@@ -183,25 +200,13 @@
 		return { headers, colTypes, rows };
 	}
 
-	function applyCSVPaste() {
-		csvPasteError = '';
-		const parsed = csvToTable(csvPasteText);
-		if (!parsed) {
-			csvPasteError = 'Could not parse CSV. Ensure at least 2 columns and a header row.';
-			return;
-		}
-		if (chartMode === 'bar') barTable = parsed;
-		else lineTable = parsed;
-		csvPasteText = '';
-		csvPasteVisible = false;
-	}
-
 	// ── BAR CHART DERIVED ─────────────────────────────────────────────────────
 
 	const legendItems = $derived(barTable.headers.slice(1).filter((h) => h !== 'Total'));
 
 	const parsedBarData = $derived.by(() =>
 		barTable.rows
+			.filter((row) => row[0]?.trim())
 			.map((row) => {
 				const obj: Record<string, any> = { Category: row[0] };
 				barTable.headers.slice(1).forEach((h, i) => {
@@ -209,7 +214,6 @@
 				});
 				return obj;
 			})
-			.filter((item) => legendItems.some((k) => (item[k] || 0) > 0))
 	);
 
 	const barChartData = $derived.by(() => {
@@ -222,9 +226,10 @@
 	});
 
 	const barCategories = $derived(parsedBarData.map((d) => d.Category));
-	const barMaxValue = $derived(
-		Math.max(1, ...parsedBarData.flatMap((d) => legendItems.map((k) => d[k] || 0)))
-	);
+	const barMaxValue = $derived.by(() => {
+		const vals = parsedBarData.flatMap((d) => legendItems.map((k) => d[k] || 0));
+		return vals.length > 0 ? Math.max(1, ...vals) : 1;
+	});
 	const effectiveBarMax = $derived(maxScaleValue > 0 ? maxScaleValue : barMaxValue);
 	const colorFill = $derived((d: { type: string }) => legendColors[d.type] ?? '#888');
 
@@ -254,9 +259,11 @@
 
 	$effect(() => {
 		const defaults = ['#ff0000', '#ffaa00', '#ffdd00', '#666666'];
+		const missing = legendItems.filter((item) => !legendColors[item]);
+		if (missing.length === 0) return;
 		const c = { ...legendColors };
-		legendItems.forEach((item, i) => {
-			if (!c[item]) c[item] = defaults[i % defaults.length];
+		missing.forEach((item, i) => {
+			c[item] = defaults[legendItems.indexOf(item) % defaults.length];
 		});
 		legendColors = c;
 	});
@@ -266,30 +273,33 @@
 	const lineSeriesKeys = $derived(lineTable.headers.slice(1));
 
 	const lineSeriesData = $derived.by(() =>
-		lineSeriesKeys.map((key) => ({
+		lineSeriesKeys.map((key, ki) => ({
 			key,
 			color: lineColors[key] ?? '#888',
 			points: lineTable.rows.map((row) => ({
 				x: row[0],
-				y: Number(row[lineTable.headers.indexOf(key)]) || 0
+				y: Number(row[ki + 1] ?? 0) || 0
 			}))
 		}))
 	);
 
-	const lineMaxY = $derived(
-		Math.max(
-			1,
-			...lineTable.rows.flatMap((row) => lineSeriesKeys.map((_, i) => Number(row[i + 1]) || 0))
-		)
-	);
+	const lineMaxY = $derived.by(() => {
+		const vals = lineTable.rows.flatMap((row) =>
+			lineSeriesKeys.map((_, i) => Number(row[i + 1] ?? 0) || 0)
+		);
+		return vals.length > 0 ? Math.max(1, ...vals) : 1;
+	});
+
 	const effectiveLineMax = $derived(maxScaleValue > 0 ? maxScaleValue : lineMaxY);
 	const lineXDomain = $derived(lineTable.rows.map((r) => r[0]));
 
 	$effect(() => {
 		const defaults = ['#ff4444', '#ffaa00', '#44aaff', '#44ff88', '#cc44ff'];
+		const missing = lineSeriesKeys.filter((k) => !lineColors[k]);
+		if (missing.length === 0) return;
 		const c = { ...lineColors };
-		lineSeriesKeys.forEach((k, i) => {
-			if (!c[k]) c[k] = defaults[i % defaults.length];
+		missing.forEach((k) => {
+			c[k] = defaults[lineSeriesKeys.indexOf(k) % defaults.length];
 		});
 		lineColors = c;
 	});
@@ -297,13 +307,16 @@
 	// ── STORAGE ───────────────────────────────────────────────────────────────
 
 	onMount(async () => {
-		const result = await window.storage.get('chartDataV4').catch(() => null);
+		const result = (await window.storage?.get('chartDataV4').catch(() => null)) ?? null;
 		if (result?.value) {
 			try {
 				const data = JSON.parse(result.value);
 				if (data.title) title = data.title;
 				if (data.subtitle !== undefined) subtitle = data.subtitle;
 				if (data.maxScaleValue !== undefined) maxScaleValue = data.maxScaleValue;
+				if (data.showAxisLabels !== undefined) showAxisLabels = data.showAxisLabels;
+				if (data.xAxisLabel !== undefined) xAxisLabel = data.xAxisLabel;
+				if (data.yAxisLabel !== undefined) yAxisLabel = data.yAxisLabel;
 				if (data.barTable) barTable = data.barTable;
 				if (data.lineTable) lineTable = data.lineTable;
 				if (data.legendColors) legendColors = data.legendColors;
@@ -317,12 +330,15 @@
 	$effect(() => {
 		if (!isLoaded) return;
 		window.storage
-			.set(
+			?.set(
 				'chartDataV4',
 				JSON.stringify({
 					title,
 					subtitle,
 					maxScaleValue,
+					showAxisLabels,
+					xAxisLabel,
+					yAxisLabel,
 					barTable,
 					lineTable,
 					legendColors,
@@ -411,7 +427,7 @@
 		};
 	}
 
-	// ── EXPORT ────────────────────────────────────────────────────────────────
+	// ── EXPORT
 
 	async function exportAsImage() {
 		if (!chartElement) return;
@@ -455,100 +471,94 @@
 	}
 </script>
 
-<!-- ── COLUMN SETTINGS MODAL ──────────────────────────────────────────────── -->
-{#if modalOpen}
-	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-		onclick={() => (modalOpen = false)}
-		role="dialog"
-		aria-modal="true"
-	>
-		<div class="card w-80 bg-base-100 shadow-2xl" onclick={(e) => e.stopPropagation()}>
-			<div class="card-body gap-4 p-5">
-				<div class="flex items-center justify-between">
-					<h3 class="text-base font-semibold">Column Settings</h3>
+<!-- ── COLUMN SETTINGS MODAL -->
+<dialog id="col_settings_modal" class="modal" class:modal-open={modalOpen}>
+	<div class="modal-box w-80" onclick={(e) => e.stopPropagation()}>
+		<div class="mb-4 flex items-center justify-between">
+			<h3 class="text-base font-semibold">Column Settings</h3>
+			<button
+				type="button"
+				class="btn btn-circle btn-ghost btn-xs"
+				onclick={() => (modalOpen = false)}
+			>
+				<IDismiss class="size-4" />
+			</button>
+		</div>
+
+		<!-- Column name -->
+		<div class="form-control mb-3 gap-1">
+			<label class="label py-0"><span class="label-text text-xs">Column name</span></label>
+			{#if chartMode === 'bar'}
+				<input
+					type="text"
+					bind:value={barTable.headers[modalColIdx]}
+					class="input-bordered input input-sm"
+				/>
+			{:else}
+				<input
+					type="text"
+					bind:value={lineTable.headers[modalColIdx]}
+					class="input-bordered input input-sm"
+				/>
+			{/if}
+		</div>
+
+		<!-- Data type -->
+		<div class="form-control mb-3 gap-1">
+			<label class="label py-0"><span class="label-text text-xs">Data type</span></label>
+			<div class="join w-full">
+				{#each COL_TYPE_CYCLE as t}
 					<button
 						type="button"
-						class="btn btn-circle btn-ghost btn-xs"
-						onclick={() => (modalOpen = false)}
+						class="btn join-item flex-1 btn-sm {modalColType === t ? 'btn-primary' : 'btn-outline'}"
+						onclick={() => setModalColType(t)}
 					>
-						<IDismiss class="size-4" />
+						{t === 'date' ? '📅' : t === 'number' ? '#' : 'T'}&nbsp;{t}
 					</button>
-				</div>
-
-				<!-- Column name -->
-				<div class="form-control gap-1">
-					<label class="label py-0"><span class="label-text text-xs">Column name</span></label>
-					{#if chartMode === 'bar'}
-						<input
-							type="text"
-							bind:value={barTable.headers[modalColIdx]}
-							class="input-bordered input input-sm"
-						/>
-					{:else}
-						<input
-							type="text"
-							bind:value={lineTable.headers[modalColIdx]}
-							class="input-bordered input input-sm"
-						/>
-					{/if}
-				</div>
-
-				<!-- Data type -->
-				<div class="form-control gap-1">
-					<label class="label py-0"><span class="label-text text-xs">Data type</span></label>
-					<div class="join w-full">
-						{#each COL_TYPE_CYCLE as t}
-							<button
-								type="button"
-								class="btn join-item flex-1 btn-sm {modalColType === t
-									? 'btn-primary'
-									: 'btn-outline'}"
-								onclick={() => setModalColType(t)}
-							>
-								{t === 'date' ? '📅' : t === 'number' ? '#' : 'T'}&nbsp;{t}
-							</button>
-						{/each}
-					</div>
-				</div>
-
-				<!-- Series color (only for data columns, not the category/x column) -->
-				{#if modalColIdx > 0}
-					<div class="form-control gap-1">
-						<label class="label py-0"><span class="label-text text-xs">Series color</span></label>
-						<div class="flex items-center gap-3">
-							<input
-								type="color"
-								value={modalColor}
-								oninput={(e) => setModalColor((e.target as HTMLInputElement).value)}
-								class="h-10 w-16 cursor-pointer rounded border"
-							/>
-							<span class="font-mono text-sm text-base-content/70">{modalColor}</span>
-						</div>
-					</div>
-				{/if}
-
-				<!-- Remove column -->
-				{#if (chartMode === 'bar' ? barTable.headers : lineTable.headers).length > 2 && modalColIdx > 0}
-					<button
-						type="button"
-						class="btn w-full btn-outline btn-sm btn-error"
-						onclick={() => {
-							removeColumn(modalColIdx);
-							modalOpen = false;
-						}}
-					>
-						<IDismiss class="mr-1 size-4" /> Remove this column
-					</button>
-				{/if}
-
-				<button type="button" class="btn btn-sm btn-primary" onclick={() => (modalOpen = false)}
-					>Done</button
-				>
+				{/each}
 			</div>
 		</div>
+
+		<!-- Series color -->
+		{#if modalColIdx > 0}
+			<div class="form-control mb-3 gap-1">
+				<label class="label py-0"><span class="label-text text-xs">Series color</span></label>
+				<div class="flex items-center gap-3">
+					<input
+						type="color"
+						value={modalColor}
+						oninput={(e) => setModalColor((e.target as HTMLInputElement).value)}
+						class="h-10 w-16 cursor-pointer rounded border"
+					/>
+					<span class="font-mono text-sm text-base-content/70">{modalColor}</span>
+				</div>
+			</div>
+		{/if}
+
+		<!-- Remove column -->
+		{#if (chartMode === 'bar' ? barTable.headers : lineTable.headers).length > 2 && modalColIdx > 0}
+			<button
+				type="button"
+				class="btn mb-3 w-full btn-outline btn-sm btn-error"
+				onclick={() => {
+					removeColumn(modalColIdx);
+					modalOpen = false;
+				}}
+			>
+				<IDismiss class="mr-1 size-4" /> Remove this column
+			</button>
+		{/if}
+
+		<button type="button" class="btn w-full btn-sm btn-primary" onclick={() => (modalOpen = false)}>
+			Done
+		</button>
 	</div>
-{/if}
+
+	<!-- Click backdrop to close -->
+	<form method="dialog" class="modal-backdrop">
+		<button onclick={() => (modalOpen = false)}>close</button>
+	</form>
+</dialog>
 
 <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 	<!-- ── CONFIG PANEL ── -->
@@ -590,55 +600,44 @@
 				/>
 			</div>
 
+			<!-- ── AXIS LABELS TOGGLE -->
 			<div class="form-control">
-				<label class="label py-1"><span class="label-text text-xs">Series Colors</span></label>
-				<div class="space-y-1">
-					{#if chartMode === 'bar'}
-						{#each legendItems as key (key)}
-							<div class="flex items-center gap-2">
-								<input
-									type="color"
-									bind:value={legendColors[key]}
-									class="h-7 w-10 cursor-pointer rounded border"
-								/>
-								<span class="truncate text-xs">{key}</span>
-							</div>
-						{/each}
-					{:else}
-						{#each lineSeriesKeys as key (key)}
-							<div class="flex items-center gap-2">
-								<input
-									type="color"
-									bind:value={lineColors[key]}
-									class="h-7 w-10 cursor-pointer rounded border"
-								/>
-								<span class="truncate text-xs">{key}</span>
-							</div>
-						{/each}
-					{/if}
-				</div>
+				<label class="label cursor-pointer py-1">
+					<span class="label-text text-xs">Show Axis Labels</span>
+					<input
+						type="checkbox"
+						bind:checked={showAxisLabels}
+						class="toggle toggle-primary toggle-sm"
+					/>
+				</label>
 			</div>
 
-			<div>
-				<p class="mb-1 text-xs text-base-content/50">Examples</p>
-				<div class="flex flex-wrap gap-1">
-					{#if chartMode === 'bar'}
-						<button type="button" class="btn btn-outline btn-xs" onclick={loadBarExample1}
-							>Bar 1</button
-						>
-						<button type="button" class="btn btn-outline btn-xs" onclick={loadBarExample2}
-							>Bar 2</button
-						>
-					{:else}
-						<button type="button" class="btn btn-outline btn-xs" onclick={loadLineExample1}
-							>Line 1</button
-						>
-						<button type="button" class="btn btn-outline btn-xs" onclick={loadLineExample2}
-							>Line 2</button
-						>
-					{/if}
+			{#if showAxisLabels}
+				<div class="space-y-2 rounded-lg border border-base-300 bg-base-200/50 p-3">
+					<div class="form-control">
+						<label class="label py-0.5">
+							<span class="label-text text-xs">X-axis label</span>
+						</label>
+						<input
+							type="text"
+							bind:value={xAxisLabel}
+							placeholder="e.g. Equipment Type"
+							class="input-bordered input input-xs"
+						/>
+					</div>
+					<div class="form-control">
+						<label class="label py-0.5">
+							<span class="label-text text-xs">Y-axis label</span>
+						</label>
+						<input
+							type="text"
+							bind:value={yAxisLabel}
+							placeholder="e.g. Count"
+							class="input-bordered input input-xs"
+						/>
+					</div>
 				</div>
-			</div>
+			{/if}
 
 			<button
 				type="button"
@@ -667,43 +666,69 @@
 					</div>
 
 					{#if chartMode === 'bar'}
-						<Plot
-							height={Math.max(200, barCategories.length * 36 + 60)}
-							marginLeft={140}
-							marginBottom={30}
-							marginRight={40}
-							x={{ domain: [0, effectiveBarMax], grid: true }}
-							y={{ domain: [...barCategories].reverse(), padding: 0.2 }}
-							class="color-gray-400 font-size-12 bg-transparent"
-						>
-							<BarX data={barChartData} x="value" y="category" fill={colorFill} inset={1} />
-							<Text
-								data={barSegmentLabels}
-								x="x"
-								y="category"
-								text="label"
-								fill="rgba(255,255,255,0.9)"
-								fontSize={10}
-								fontWeight="600"
-								textAnchor="middle"
-								dy={1}
-							/>
-							<Text
-								data={barTotalLabels}
-								x="x"
-								y="category"
-								text="label"
-								fill="#9ca3af"
-								fontSize={11}
-								fontWeight="700"
-								textAnchor="start"
-								dx={4}
-								dy={1}
-							/>
-							<AxisX tickFormat={(d) => String(d)} style="color: #9ca3af; font-size: 11px;" />
-							<AxisY style="color: #e5e7eb; font-size: 11px;" />
-							<RuleX x={0} />
-						</Plot>
+						{#if barCategories.length > 0}
+							<div class="relative">
+								<!-- Y-axis label: rotated, positioned left of the chart -->
+								{#if showAxisLabels && yAxisLabel?.trim()}
+									<div
+										class="pointer-events-none absolute inset-y-0 left-0 flex items-center"
+										style="width:16px;"
+									>
+										<span
+											class="whitespace-nowrap text-gray-400"
+											style="writing-mode: vertical-rl; transform: rotate(180deg); font-size: 10px; line-height:1;"
+											>{yAxisLabel}</span
+										>
+									</div>
+								{/if}
+								<Plot
+									height={Math.max(200, barCategories.length * 36 + 60)}
+									marginLeft={showAxisLabels && yAxisLabel?.trim() ? 156 : 140}
+									marginBottom={showAxisLabels && xAxisLabel?.trim() ? 50 : 30}
+									marginRight={40}
+									x={{ domain: [0, effectiveBarMax], grid: true }}
+									y={{ domain: [...barCategories].reverse(), padding: 0.2 }}
+									class="color-gray-400 font-size-12 bg-transparent"
+								>
+									<BarX data={barChartData} x="value" y="category" fill={colorFill} inset={1} />
+									<Text
+										data={barSegmentLabels}
+										x="x"
+										y="category"
+										text="label"
+										fill="rgba(255,255,255,0.9)"
+										fontSize={10}
+										fontWeight="600"
+										textAnchor="middle"
+										dy={1}
+									/>
+									<Text
+										data={barTotalLabels}
+										x="x"
+										y="category"
+										text="label"
+										fill="#9ca3af"
+										fontSize={11}
+										fontWeight="700"
+										textAnchor="start"
+										dx={4}
+										dy={1}
+									/>
+									<AxisX tickFormat={(d) => String(d)} style="color: #9ca3af; font-size: 11px;" />
+									<AxisY style="color: #e5e7eb; font-size: 11px;" />
+									<RuleX x={0} />
+								</Plot>
+								<!-- X-axis label below bar chart -->
+								{#if showAxisLabels && xAxisLabel?.trim()}
+									<div class="mt-1 text-center">
+										<span class="text-gray-400" style="font-size: 10px;">{xAxisLabel}</span>
+									</div>
+								{/if}
+							</div>
+							<!-- end relative wrapper -->
+						{:else}
+							<p class="py-12 text-center text-sm text-base-content/40">No data to display</p>
+						{/if}
 						<div class="mt-4 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
 							{#each legendItems as item (item)}
 								<div class="flex items-center gap-2">
@@ -713,23 +738,49 @@
 							{/each}
 						</div>
 					{:else}
-						<Plot
-							height={300}
-							marginLeft={50}
-							marginBottom={50}
-							marginRight={20}
-							marginTop={10}
-							x={{ domain: lineXDomain, grid: true, padding: 0.05 }}
-							y={{ domain: [0, effectiveLineMax], grid: true }}
-							class="color-gray-400 font-size-12 bg-transparent"
-						>
-							{#each lineSeriesData as series (series.key)}
-								<Line data={series.points} x="x" y="y" stroke={series.color} strokeWidth={2} />
-								<Dot data={series.points} x="x" y="y" fill={series.color} r={3} />
-							{/each}
-							<AxisX tickFormat={(d) => String(d)} style="color: #9ca3af; font-size: 11px;" />
-							<AxisY ticks={6} style="color: #e5e7eb; font-size: 11px;" />
-						</Plot>
+						{#if lineXDomain.length > 0}
+							<div class="relative">
+								<!-- Y-axis label rotated left -->
+								{#if showAxisLabels && yAxisLabel?.trim()}
+									<div
+										class="pointer-events-none absolute inset-y-0 left-0 flex items-center"
+										style="width:16px;"
+									>
+										<span
+											class="whitespace-nowrap text-gray-400"
+											style="writing-mode: vertical-rl; transform: rotate(180deg); font-size: 10px; line-height:1;"
+											>{yAxisLabel}</span
+										>
+									</div>
+								{/if}
+								<Plot
+									height={300}
+									marginLeft={showAxisLabels && yAxisLabel?.trim() ? 70 : 50}
+									marginBottom={showAxisLabels && xAxisLabel?.trim() ? 65 : 50}
+									marginRight={20}
+									marginTop={10}
+									x={{ domain: lineXDomain, grid: true, padding: 0.05 }}
+									y={{ domain: [0, effectiveLineMax], grid: true }}
+									class="color-gray-400 font-size-12 bg-transparent"
+								>
+									{#each lineSeriesData as series (series.key)}
+										<Line data={series.points} x="x" y="y" stroke={series.color} strokeWidth={2} />
+										<Dot data={series.points} x="x" y="y" fill={series.color} r={3} />
+									{/each}
+									<AxisX tickFormat={(d) => String(d)} style="color: #9ca3af; font-size: 11px;" />
+									<AxisY ticks={6} style="color: #e5e7eb; font-size: 11px;" />
+								</Plot>
+								<!-- X-axis label below line chart -->
+								{#if showAxisLabels && xAxisLabel?.trim()}
+									<div class="mt-1 text-center">
+										<span class="text-gray-400" style="font-size: 10px;">{xAxisLabel}</span>
+									</div>
+								{/if}
+							</div>
+							<!-- end relative wrapper -->
+						{:else}
+							<p class="py-12 text-center text-sm text-base-content/40">No data to display</p>
+						{/if}
 						<div class="mt-2 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
 							{#each lineSeriesData as s (s.key)}
 								<div class="flex items-center gap-2">
@@ -752,57 +803,16 @@
 					<div class="flex flex-wrap gap-1">
 						<button type="button" class="btn btn-outline btn-xs" onclick={addRow}>+ Row</button>
 						<button type="button" class="btn btn-outline btn-xs" onclick={addColumn}>+ Col</button>
-						<button
-							type="button"
-							class="btn btn-xs {csvPasteVisible ? 'btn-warning' : 'btn-outline'}"
-							onclick={() => {
-								csvPasteVisible = !csvPasteVisible;
-								csvPasteError = '';
-							}}
-						>
-							{#if csvPasteVisible}
-								<IDismiss class="mr-1 inline size-3.5" /> Cancel
-							{:else}
-								<IClipboard class="mr-1 inline size-4" /> Paste CSV
-							{/if}
+						<button type="button" class="btn btn-outline btn-xs" onclick={pasteCSVFromClipboard}>
+							<IClipboard class="mr-1 inline size-4" /> Paste CSV
 						</button>
 					</div>
 				</div>
 
-				<!-- CSV paste drawer -->
-				{#if csvPasteVisible}
-					<div
-						class="mb-4 space-y-2 rounded-xl border border-dashed border-base-300 bg-base-200/60 p-3"
-					>
-						<p class="text-xs text-base-content/60">
-							Paste CSV — first row = headers, first column = category / x-axis. Column types are
-							auto-detected.
-						</p>
-						<textarea
-							class="textarea-bordered textarea h-28 w-full font-mono text-xs"
-							bind:value={csvPasteText}
-							placeholder="Category,Destroyed,Damaged&#10;Tanks,5,2&#10;AFVs,12,3"
-						></textarea>
-						{#if csvPasteError}
-							<p class="text-xs text-error">{csvPasteError}</p>
-						{/if}
-						<button
-							type="button"
-							class="btn btn-sm btn-primary"
-							onclick={applyCSVPaste}
-							disabled={!csvPasteText.trim()}
-						>
-							Apply CSV →
-						</button>
-					</div>
+				{#if csvPasteError}
+					<p class="mb-2 text-xs text-error">{csvPasteError}</p>
 				{/if}
 
-				<!--
-					FIX: Bind directly into barTable.rows[rowIdx][colIdx] via the row proxy reference.
-					Key each row by the row object reference (not index) so Svelte tracks identity
-					correctly and bindings stay live when rows are added/removed/reordered.
-					Using `(row)` as key ensures each row's DOM node is tied to the actual array element.
-				-->
 				{#if chartMode === 'bar'}
 					<div class="overflow-x-auto rounded-lg border border-base-300">
 						<table class="table w-full table-xs">
@@ -916,11 +926,26 @@
 						</table>
 					</div>
 				{/if}
-
-				<p class="mt-2 text-xs text-base-content/40">
-					Click <ISettings class="inline size-3" /> on any column header to configure its type and color.
-				</p>
 			</div>
+		</div>
+	</div>
+
+	<div>
+		<p class="mb-1 text-xs text-base-content/50">Examples</p>
+		<div class="flex flex-wrap gap-1">
+			{#if chartMode === 'bar'}
+				<button type="button" class="btn btn-outline btn-xs" onclick={loadBarExample1}>Bar 1</button
+				>
+				<button type="button" class="btn btn-outline btn-xs" onclick={loadBarExample2}>Bar 2</button
+				>
+			{:else}
+				<button type="button" class="btn btn-outline btn-xs" onclick={loadLineExample1}
+					>Line 1</button
+				>
+				<button type="button" class="btn btn-outline btn-xs" onclick={loadLineExample2}
+					>Line 2</button
+				>
+			{/if}
 		</div>
 	</div>
 </div>
