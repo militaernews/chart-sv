@@ -10,15 +10,28 @@
 	import IClipboard from '~icons/fluent/clipboard-paste-20-regular';
 	import IDismiss from '~icons/fluent/dismiss-16-regular';
 	import ISettings from '~icons/fluent/settings-16-regular';
+	import ILandscape from '~icons/fluent/rectangle-landscape-24-regular';
+	import IPortrait from '~icons/fluent/rectangle-portrait-24-regular';
+	import ITune from '~icons/fluent/options-24-regular';
+	import ITable from '~icons/fluent/table-24-regular';
 
 	type ChartMode = 'bar' | 'line';
+	type Orientation = 'landscape' | 'portrait';
 	type ColType = 'text' | 'number' | 'date';
 
 	const COL_TYPE_CYCLE: ColType[] = ['text', 'number', 'date'];
 
+	// Portrait keeps the figure narrow (good for phone/story-format shares);
+	// landscape lets it fill the panel width (good for wide news-post images).
+	// Line charts also grow taller in portrait since the width can't do the
+	// work of conveying "tall" the way it does for bar-height-by-category.
+	const PORTRAIT_MAX_WIDTH = 560;
+	const LINE_HEIGHT: Record<Orientation, number> = { landscape: 300, portrait: 420 };
+
 	// ── STATE
 
 	let chartMode = $state<ChartMode>('bar');
+	let orientation = $state<Orientation>('landscape');
 	let title = $state('Russian Losses in Kharkiv');
 	let subtitle = $state('as of June 3, 2024');
 	let maxScaleValue = $state(0);
@@ -322,6 +335,7 @@
 				if (data.legendColors) legendColors = data.legendColors;
 				if (data.lineColors) lineColors = data.lineColors;
 				if (data.chartMode) chartMode = data.chartMode;
+				if (data.orientation) orientation = data.orientation;
 			} catch {}
 		}
 		isLoaded = true;
@@ -343,7 +357,8 @@
 					lineTable,
 					legendColors,
 					lineColors,
-					chartMode
+					chartMode,
+					orientation
 				})
 			)
 			.catch(console.error);
@@ -427,6 +442,13 @@
 		};
 	}
 
+	// ── LAYOUT
+
+	const figureStyle = $derived(
+		orientation === 'portrait' ? `max-width:${PORTRAIT_MAX_WIDTH}px` : ''
+	);
+	const lineHeight = $derived(LINE_HEIGHT[orientation]);
+
 	// ── EXPORT
 
 	async function exportAsImage() {
@@ -435,7 +457,7 @@
 		try {
 			await new Promise((r) => setTimeout(r, 100));
 			const canvas = await html2canvas(chartElement, {
-				backgroundColor: '#1a1a1a',
+				backgroundColor: '#141214',
 				scale: 2,
 				logging: false,
 				useCORS: true,
@@ -563,8 +585,10 @@
 <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 	<!-- ── CONFIG PANEL ── -->
 	<div class="card bg-base-100 shadow-xl">
-		<div class="card-body space-y-3 p-4">
-			<h2 class="card-title text-lg">Configuration</h2>
+		<div class="card-body space-y-4 p-4">
+			<h2 class="card-title gap-2 text-lg">
+				<ITune class="size-5 text-primary" /> Configuration
+			</h2>
 
 			<div class="join w-full">
 				<button
@@ -578,6 +602,28 @@
 					onclick={() => (chartMode = 'line')}
 					><ILineChart class="mr-1 inline size-4" /> Line</button
 				>
+			</div>
+
+			<div class="form-control gap-1">
+				<label class="label py-0"><span class="label-text text-xs">Orientation</span></label>
+				<div class="join w-full">
+					<button
+						type="button"
+						class="btn join-item flex-1 btn-sm {orientation === 'landscape'
+							? 'btn-primary'
+							: 'btn-outline'}"
+						onclick={() => (orientation = 'landscape')}
+						><ILandscape class="mr-1 inline size-4" /> Landscape</button
+					>
+					<button
+						type="button"
+						class="btn join-item flex-1 btn-sm {orientation === 'portrait'
+							? 'btn-primary'
+							: 'btn-outline'}"
+						onclick={() => (orientation = 'portrait')}
+						><IPortrait class="mr-1 inline size-4" /> Portrait</button
+					>
+				</div>
 			</div>
 
 			<div class="form-control">
@@ -639,6 +685,8 @@
 				</div>
 			{/if}
 
+			<div class="divider my-0"></div>
+
 			<button
 				type="button"
 				class="btn w-full btn-sm btn-primary"
@@ -653,9 +701,14 @@
 	<!-- ── CHART + TABLE PANEL ── -->
 	<div class="flex flex-col gap-4 lg:col-span-2">
 		<!-- Chart -->
-		<div class="card text-neutral-content shadow-xl">
-			<div class="card-body p-4">
-				<div bind:this={chartElement} data-export-chart class="relative p-4 pr-6">
+		<div class="card bg-base-100 shadow-xl">
+			<div class="card-body items-center p-4">
+				<div
+					bind:this={chartElement}
+					data-export-chart
+					class="relative w-full rounded-lg bg-[#141214] p-4 pr-6 text-neutral-content ring-1 ring-white/10"
+					style={figureStyle}
+				>
 					<Branding isMobile={false} />
 					<div class="mb-6 text-center">
 						<h3 class="text-md font-semibold md:text-base">{title}</h3>
@@ -729,11 +782,11 @@
 						{:else}
 							<p class="py-12 text-center text-sm text-base-content/40">No data to display</p>
 						{/if}
-						<div class="mt-4 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
+						<div class="mt-4 flex flex-wrap justify-center gap-2 text-xs md:text-sm">
 							{#each legendItems as item (item)}
-								<div class="flex items-center gap-2">
-									<div class="size-4 rounded" style="background-color: {legendColors[item]}"></div>
-									<span>{item}</span>
+								<div class="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1">
+									<div class="size-2.5 rounded-full" style="background-color: {legendColors[item]}"></div>
+									<span class="text-gray-200">{item}</span>
 								</div>
 							{/each}
 						</div>
@@ -754,7 +807,7 @@
 									</div>
 								{/if}
 								<Plot
-									height={300}
+									height={lineHeight}
 									marginLeft={showAxisLabels && yAxisLabel?.trim() ? 70 : 50}
 									marginBottom={showAxisLabels && xAxisLabel?.trim() ? 65 : 50}
 									marginRight={20}
@@ -781,12 +834,12 @@
 						{:else}
 							<p class="py-12 text-center text-sm text-base-content/40">No data to display</p>
 						{/if}
-						<div class="mt-2 flex flex-wrap justify-center gap-6 text-xs md:text-sm">
+						<div class="mt-3 flex flex-wrap justify-center gap-2 text-xs md:text-sm">
 							{#each lineSeriesData as s (s.key)}
-								<div class="flex items-center gap-2">
-									<div class="h-0.5 w-5 rounded" style="background-color:{s.color}"></div>
+								<div class="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1">
+									<div class="h-0.5 w-4 rounded" style="background-color:{s.color}"></div>
 									<div class="size-2 rounded-full" style="background-color:{s.color}"></div>
-									<span>{s.key}</span>
+									<span class="text-gray-200">{s.key}</span>
 								</div>
 							{/each}
 						</div>
@@ -799,7 +852,9 @@
 		<div class="card bg-base-100 shadow-xl">
 			<div class="card-body p-4">
 				<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-					<h2 class="card-title text-base">Data Editor</h2>
+					<h2 class="card-title gap-2 text-base">
+						<ITable class="size-4 text-primary" /> Data Editor
+					</h2>
 					<div class="flex flex-wrap gap-1">
 						<button type="button" class="btn btn-outline btn-xs" onclick={addRow}>+ Row</button>
 						<button type="button" class="btn btn-outline btn-xs" onclick={addColumn}>+ Col</button>
